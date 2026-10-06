@@ -10,6 +10,8 @@ const childProcess = require('child_process');
 const { run, main, STEPS } = require('../scripts/run');
 
 const ALL = STEPS.map((s) => s.id);
+const SKILL_ROOT = path.join(__dirname, '..');
+const RUN_CMD = 'node ' + path.join(SKILL_ROOT, 'scripts', 'run.js').split(path.sep).join('/');
 
 function repo(name) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'run-test-'));
@@ -17,7 +19,11 @@ function repo(name) {
   return root;
 }
 
-const stepIdOf = (script, args) => (script === 'commit' ? 'commit-' + args[args.indexOf('--step') + 1] : script);
+const stepIdOf = (script, args) => {
+  if (script === 'commit') return 'commit-' + args[args.indexOf('--step') + 1];
+  if (script === 'webpack-shared' && args.indexOf('--validate-only') !== -1) return 'webpack-validate';
+  return script;
+};
 
 // Mock runner: `plan[stepId]` is a result object, an array (one per call), or a function(args)
 function mock(plan) {
@@ -55,9 +61,9 @@ test('fresh run stops before branch and suggests the derived name', async () => 
   const out = await go(root, [], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan', 'branch']);
   assert.deepStrictEqual(m.calls[2].args, ['--json', '--dry-run']); // probe only
-  assert.match(out, /\[ 1\/17\] preflight\s+✓ OK/);
-  assert.match(out, /\[ 3\/17\] branch\s+⏸ PAUSE {5}נדרש אישור שם בראנץ'/);
-  assert.match(out, /להמשך: node scripts\/run\.js --resume --answer branch\.target=feature\/migration-v2-hasava-mfe-20261006/);
+  assert.match(out, /\[ 1\/18] preflight\s+✓ OK/);
+  assert.match(out, /\[ 3\/18] branch\s+⏸ PAUSE {5}נדרש אישור שם בראנץ'/);
+  assert.ok(out.indexOf('להמשך: ' + RUN_CMD + ' --resume --answer branch.target=feature/migration-v2-hasava-mfe-20261006') !== -1, out);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   const s = state(root);
   assert.deepStrictEqual(s.completed, ['preflight', 'scan']);
@@ -75,7 +81,7 @@ test('--resume --answer passes the name to branch and continues', async () => {
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['branch', 'package-json', 'codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'commit-mechanical', 'codemod-makestyles']);
   assert.deepStrictEqual(m.calls[5].args, ['--json', '--step', 'mechanical']);
   // REVIEW prints the full content and pauses; the step itself is done
-  assert.match(out, /\[ 9\/17\] codemod-makestyles\s+⏸ REVIEW/);
+  assert.match(out, /\[ 9\/18] codemod-makestyles\s+⏸ REVIEW/);
   assert.match(out, /1\. src\/D\.jsx:4 – רמה C – box תלוי ב-props/);
   assert.match(out, /ℹ בדוק ויזואלית/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
@@ -98,7 +104,7 @@ test('BLOCKED → PAUSE with blockers; --resume reruns the same step', async () 
   const root = repo();
   const m1 = mock({ install: { result: 'BLOCKED', blockers: [{ message: 'ERESOLVE – קונפליקט', tree: 'peer react@"^17" from x' }] } });
   const out = await go(root, ['--yes'], m1);
-  assert.match(out, /\[13\/17\] install\s+⛔ BLOCKED/);
+  assert.match(out, /\[13\/18] install\s+⛔ BLOCKED/);
   assert.match(out, /⛔ ERESOLVE – קונפליקט\n {5}\| peer react@"\^17" from x/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   assert.strictEqual(state(root).current, 'install');
@@ -109,10 +115,25 @@ test('BLOCKED → PAUSE with blockers; --resume reruns the same step', async () 
   assert.strictEqual(m2.calls[0].id, 'install');
 });
 
+test('webpack-validate REVIEW → PAUSE before build, full error output printed; --resume continues at build', async () => {
+  const root = repo();
+  const output = 'Error: FederationConfigError: role\n    at buildSharedGen1 (index.js:3:9)\n    at Object.<anonymous> (webpack.config.js:12:5)';
+  const m1 = mock({ 'webpack-validate': { result: 'REVIEW', manual: [{ file: 'webpack.config.js', line: null, reason: 'הוולידציה נכשלה', output: output }] } });
+  const out = await go(root, ['--yes'], m1);
+  assert.match(out, /\[14\/18] webpack-validate\s+⏸ REVIEW/);
+  assert.match(out, / {7}\| {5}at Object\.<anonymous> \(webpack\.config\.js:12:5\)/);
+  assert.ok(m1.calls.every((c) => c.id !== 'build'));
+  assert.strictEqual(last(out), 'RESULT: PAUSE');
+
+  const m2 = mock({});
+  await go(root, ['--resume'], m2);
+  assert.strictEqual(m2.calls[0].id, 'build');
+});
+
 test('script crash (exit != 0) → FAILED with the stderr tail', async () => {
   const root = repo();
   const out = await go(root, ['--yes'], mock({ scan: { crash: true } }));
-  assert.match(out, /\[ 2\/17\] scan\s+💥 FAILED {4}exit 1/);
+  assert.match(out, /\[ 2\/18] scan\s+💥 FAILED {4}exit 1/);
   assert.match(out, /\| TypeError: boom/);
   assert.strictEqual(last(out), 'RESULT: FAILED');
   assert.strictEqual(state(root).current, 'scan');
@@ -131,7 +152,7 @@ test('build failure → PAUSE_FOR_FIX with diagnostics; resume reruns build and 
   let out = '';
   const m = mock({ build: failing(5) });
   out = await go(root, ['--yes', '--from', 'build'], m);
-  assert.match(out, /\[14\/17\] build\s+🔧 PAUSE_FOR_FIX 5 שגיאות \| סבב 1\/5/);
+  assert.match(out, /\[15\/18] build\s+🔧 PAUSE_FOR_FIX 5 שגיאות \| סבב 1\/5/);
   assert.match(out, /⛔ \[tsc TS2322\] src\/A\.tsx:1:1 – bad 0/);
   assert.strictEqual(last(out), 'RESULT: PAUSE_FOR_FIX');
   out = await go(root, ['--resume'], mock({ build: failing(3) }));
@@ -175,12 +196,18 @@ test('build passes → pipeline continues to the end → OK, state finished', as
   assert.deepStrictEqual(s.buildWindow.history, []);
 });
 
-test('full happy run with --yes runs all 17 steps in order', async () => {
+test('full happy run with --yes runs all 18 steps in order', async () => {
   const root = repo();
   const m = mock({});
   const out = await go(root, ['--yes'], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ALL);
-  assert.match(out, /\[17\/17\] report\s+✓ OK/);
+  assert.match(out, /\[18\/18] report\s+✓ OK/);
+  // the edit runs before install, its validation right after install and before build
+  const ids = m.calls.map((c) => c.id);
+  assert.ok(ids.indexOf('webpack-shared') < ids.indexOf('install'));
+  assert.strictEqual(ids.indexOf('webpack-validate'), ids.indexOf('install') + 1);
+  assert.strictEqual(ids.indexOf('build'), ids.indexOf('webpack-validate') + 1);
+  assert.deepStrictEqual(m.calls.find((c) => c.id === 'webpack-validate').args, ['--json', '--validate-only']);
   assert.strictEqual(last(out), 'RESULT: OK');
   // every step output except build is saved for report.js
   assert.ok(fs.existsSync(path.join(root, '.migration', 'commit-infra.json')));
@@ -188,6 +215,31 @@ test('full happy run with --yes runs all 17 steps in order', async () => {
 });
 
 // ---- state guards ----
+
+test('cwd inside the skill folder → PAUSE (skill-dir), nothing runs, no state written into the skill', async () => {
+  for (const cwd of [SKILL_ROOT, path.join(SKILL_ROOT, 'scripts')]) {
+    const m = mock({});
+    let out = '';
+    const code = await main(['--yes', '--json'], { cwd: cwd, runStep: m.runStep }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
+    assert.strictEqual(code, 0);
+    const res = JSON.parse(out);
+    assert.strictEqual(res.result, 'PAUSE');
+    assert.strictEqual(res.pause.kind, 'skill-dir');
+    assert.deepStrictEqual(m.calls, []);
+    assert.ok(!fs.existsSync(path.join(cwd, '.migration')), 'state written into the skill');
+  }
+});
+
+test('printed next command points at the real run.js, so it works from the service root', async () => {
+  const root = repo();
+  let out = '';
+  await main([], { cwd: root, runStep: mock(BRANCH_PROBE).runStep }, { stdout: (s) => { out += s; }, stderr: () => {} });
+  const next = out.split('\n').find((l) => l.startsWith('להמשך: ')).slice('להמשך: '.length);
+  const target = next.split(' ')[1];
+  assert.ok(path.isAbsolute(target), target);
+  assert.ok(fs.existsSync(target), target + ' does not exist');
+  assert.ok(!fs.existsSync(path.join(root, 'scripts', 'run.js')), 'the service has no scripts/run.js – a relative "scripts/run.js" would fail');
+});
 
 test('--resume without state.json → PAUSE with a clear message', async () => {
   const out = await go(repo(), ['--resume'], mock({}));
@@ -276,7 +328,7 @@ test('real child process: --only scan runs scripts/scan.js and stores its result
   fs.writeFileSync(path.join(root, 'src', 'App.jsx'), "import { Button } from '@material-ui/core';\nexport default () => <Button />;\n");
   let out = '';
   await main(['--only', 'scan'], { cwd: root }, { stdout: (s) => { out += s; }, stderr: () => {} });
-  assert.match(out, /\[ 2\/17\] scan\s+✓ OK/);
+  assert.match(out, /\[ 2\/18] scan\s+✓ OK/);
   const saved = JSON.parse(fs.readFileSync(path.join(root, '.migration', 'scan.json'), 'utf8'));
   assert.strictEqual(saved.inventory.muiFiles[0].file, 'src/App.jsx');
   assert.ok(fs.existsSync(path.join(root, '.migration', 'inventory.json')));

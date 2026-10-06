@@ -2,13 +2,19 @@
 'use strict';
 
 // run: the whole migration pipeline in order – stops at decision points, resumable from .migration/state.json.
-// Every step runs as `node scripts/<script>.js --json …`; its JSON result decides what happens next.
+// Run from the service repo root (cwd = the service). Every step runs as `node <skill>/scripts/<script>.js --json …`;
+// its JSON result decides what happens next.
 // Exit code 0 for every expected outcome (incl. PAUSE / FAILED step); 1 only if run.js itself crashes.
 
 const path = require('path');
 
 const SCRIPT = 'run';
 const STATE_FILE = '.migration/state.json';
+const SKILL_ROOT = path.join(__dirname, '..');
+// run.js runs with cwd = the service repo, so "node scripts/run.js" would not exist there.
+// The printed next-step command points at this file wherever the skill is installed.
+const RUN_PATH = __filename.split(path.sep).join('/');
+const RUN_CMD = 'node ' + (/\s/.test(RUN_PATH) ? '"' + RUN_PATH + '"' : RUN_PATH);
 const BUILD_MAX_ROUNDS = 5;
 const BUILD_NO_PROGRESS_ROUNDS = 2;
 const DIAG_PRINT_LIMIT = 40;
@@ -27,6 +33,8 @@ const STEPS = [
   { id: 'webpack-shared' },
   { id: 'commit-infra', script: 'commit', args: ['--step', 'infra'] },
   { id: 'install' },
+  // העריכה (webpack-shared) רצה לפני install; האימות דורש node_modules ולכן רץ כאן
+  { id: 'webpack-validate', script: 'webpack-shared', args: ['--validate-only'] },
   { id: 'build', fixLoop: true },
   { id: 'verify-runtime' },
   { id: 'commit-build-fixes', script: 'commit', args: ['--step', 'build-fixes'] },
@@ -111,6 +119,14 @@ async function run(argv, overrides) {
     return stop('PAUSE', { kind: 'args', message: opts.errors.join('; ') });
   }
 
+  // run from inside the skill → .migration/ and every edit would land in the skill itself. Stop before writing anything.
+  const rel = path.relative(path.resolve(SKILL_ROOT), path.resolve(root));
+  if (!rel || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+    say('⏸ run.js הורץ מתוך תיקיית הסקיל (' + root + '). יש להריץ אותו משורש הריפו של השירות המוסב:');
+    say('   cd <שורש השירות> && ' + RUN_CMD);
+    return stop('PAUSE', { kind: 'skill-dir', message: 'cwd נמצא בתוך תיקיית הסקיל – לא נכתב דבר' });
+  }
+
   // ---- state ----
   const statePath = path.join(root, STATE_FILE);
   let state = null;
@@ -120,7 +136,7 @@ async function run(argv, overrides) {
 
   if (opts.resume && !state) {
     say('⏸ אין ריצה להמשיך: ' + STATE_FILE + ' לא נמצא בתיקייה ' + root);
-    out.next = 'node scripts/run.js';
+    out.next = RUN_CMD;
     return stop('PAUSE', { kind: 'no-state', message: STATE_FILE + ' לא נמצא – הרץ בלי --resume כדי להתחיל' });
   }
   if (state && service && state.service && state.service !== service && !opts.dryRun) {
@@ -130,8 +146,8 @@ async function run(argv, overrides) {
   const unfinished = state && state.current;
   if (unfinished && !opts.resume && !opts.from && !opts.only && !opts.dryRun) {
     say('⏸ קיימת ריצה שלא הסתיימה (עצרה ב-' + state.current + ').');
-    out.next = 'node scripts/run.js --resume';
-    say('להמשך: ' + out.next + '   |   להתחלה מחדש: node scripts/run.js --from preflight');
+    out.next = RUN_CMD + ' --resume';
+    say('להמשך: ' + out.next + '   |   להתחלה מחדש: ' + RUN_CMD + ' --from preflight');
     return stop('PAUSE', { kind: 'unfinished', message: 'ריצה קודמת עצרה ב-' + state.current });
   }
   const fresh = !state || (!opts.resume && !opts.only && !(opts.from && unfinished));
@@ -160,7 +176,7 @@ async function run(argv, overrides) {
   else if (opts.resume) startIdx = state.current ? STEP_IDS.indexOf(state.current) : STEP_IDS.length;
   const endIdx = opts.only ? startIdx + 1 : STEPS.length;
   if (opts.resume && !state.current) {
-    say('✓ הצינור כבר הושלם (' + (state.finishedAt || '') + '). להרצה מחדש: node scripts/run.js --from <שלב>');
+    say('✓ הצינור כבר הושלם (' + (state.finishedAt || '') + '). להרצה מחדש: ' + RUN_CMD + ' --from <שלב>');
     out.state = state;
     return stop('OK', null);
   }
@@ -190,7 +206,7 @@ async function run(argv, overrides) {
         save();
         say(label(i, step.id) + '⏸ PAUSE     נדרש אישור שם בראנץ\'' + (suggestion ? ' (הצעה: ' + suggestion + ')' : ''));
         out.steps.push({ id: step.id, result: 'PAUSE', reason: 'approval' });
-        out.next = 'node scripts/run.js --resume --answer branch.target=' + (suggestion || '<שם>');
+        out.next = RUN_CMD + ' --resume --answer branch.target=' + (suggestion || '<שם>');
         say('');
         say('להמשך: ' + out.next);
         out.state = state;
@@ -212,7 +228,7 @@ async function run(argv, overrides) {
       state.results[step.id] = 'FAILED';
       save();
       out.steps.push({ id: step.id, result: 'FAILED', durationMs: ms });
-      out.next = 'node scripts/run.js --resume';
+      out.next = RUN_CMD + ' --resume';
       say('');
       say('הסקריפט ' + script + ' קרס. לאחר בירור – להמשך: ' + out.next);
       out.state = state;
@@ -253,13 +269,13 @@ async function run(argv, overrides) {
         say(label(i, step.id) + '⏸ PAUSE     ' + why);
         state.buildWindow = { history: [] }; // --resume אחרי החלטה מתחיל חלון חדש
         save();
-        out.next = 'node scripts/run.js --resume';
+        out.next = RUN_CMD + ' --resume';
         say('');
         say('נדרשת החלטה אנושית לפני המשך התיקונים. להמשך סבבים: ' + out.next);
         return stop('PAUSE', { kind: 'build-stalled', step: step.id, history: w.history, reason: why });
       }
       say(label(i, step.id) + '🔧 PAUSE_FOR_FIX ' + res.errorCount + ' שגיאות' + trend + ' | סבב ' + w.history.length + '/' + BUILD_MAX_ROUNDS + '  ' + fmtDuration(ms));
-      out.next = 'node scripts/run.js --resume';
+      out.next = RUN_CMD + ' --resume';
       say('');
       say('תקן את השגיאות ואז: ' + out.next);
       return stop('PAUSE_FOR_FIX', { kind: 'build', step: step.id, errorCount: res.errorCount, history: w.history.slice() });
@@ -279,9 +295,9 @@ async function run(argv, overrides) {
       if (!opts.only) { if (state.completed.indexOf(step.id) === -1) state.completed.push(step.id); state.current = STEP_IDS[i + 1] || null; }
       save();
       printReview(say, res);
-      out.next = 'node scripts/run.js --resume' + answerHint();
+      out.next = RUN_CMD + ' --resume' + answerHint();
       say('');
-      say('לאחר הבדיקה – להמשך: ' + (state.current ? 'node scripts/run.js --resume' : 'סיום (השלב האחרון)'));
+      say('לאחר הבדיקה – להמשך: ' + (state.current ? RUN_CMD + ' --resume' : 'סיום (השלב האחרון)'));
       out.state = state;
       return stop('PAUSE', { kind: 'review', step: step.id, manual: res.manual, notes: res.notes });
     }
@@ -290,7 +306,7 @@ async function run(argv, overrides) {
     say(label(i, step.id) + '⛔ BLOCKED   ' + fmtDuration(ms));
     save();
     printBlocked(say, res);
-    out.next = 'node scripts/run.js --resume';
+    out.next = RUN_CMD + ' --resume';
     say('');
     say('לאחר הטיפול – להמשך (השלב ירוץ שוב): ' + out.next);
     out.state = state;
@@ -331,6 +347,7 @@ function ensureGitExclude(deps, root, out) {
 function printReview(say, res) {
   (res.manual || []).forEach((m, i) => {
     say('  ' + (i + 1) + '. ' + (m.file ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason);
+    if (m.output) m.output.split(/\r?\n/).forEach((l) => say('       | ' + l));
     if (m.code) m.code.split('\n').forEach((l) => say('       | ' + l));
   });
   (res.changes || []).filter((c) => c.confidence === 'review').forEach((c) => say('  🔍 ' + c.file + (c.line ? ':' + c.line : '') + ' – ' + (c.reason || c.detail)));
@@ -344,6 +361,7 @@ function printBlocked(say, res) {
     if (b.tree) b.tree.split(/\r?\n/).forEach((l) => say('     | ' + l));
     if (b.raw) b.raw.split(/\r?\n/).slice(-15).forEach((l) => say('     | ' + l));
     if (b.suggestion) say('     הצעה: ' + b.suggestion);
+    if (b.code) b.code.split('\n').forEach((l) => say('     | ' + l));
   });
   (res.manual || []).forEach((m) => say('  ✋ ' + (m.file ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason));
 }

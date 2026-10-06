@@ -300,7 +300,7 @@ function astHelpers(tsm) {
   }
 
   return {
-    Node, K, FN_KINDS, lineOf, unwrap, propName, collectImports, bindingsFor, resolveRef, isReference,
+    Node, K, FN_KINDS, lineOf, unwrap, propName, collectImports, bindingsFor, resolveRef, isReference, usageKind,
     findUsages, enclosingFunction, resolveComponent, resolveIdentifierInit, describe,
   };
 }
@@ -457,6 +457,40 @@ function analyzeMakeStyles(sf, file, imports, rules, h) {
     });
   }
   return results;
+}
+
+// withStyles / createStyles / StylesProvider (JSS) – no converter exists; inventoried so the real extent is known.
+// insideMakeStyles: createStyles(...) inside a makeStyles call is removed together with it by codemod-makestyles.
+function analyzeJssApis(sf, file, imports, rules, h) {
+  const { Node, K } = h;
+  const isJssModule = (m) => rules.makeStylesModules.indexOf(m) !== -1;
+  const b = h.bindingsFor(imports, isJssModule);
+  if (b.named.size === 0 && b.ns.size === 0) return [];
+  const wanted = new Set(rules.jssApis);
+  const moduleOf = (local) => {
+    const imp = imports.find((i) => isJssModule(i.module) && (i.defaultLocal === local || i.namespaceLocal === local || i.named.some((n) => n.local === local)));
+    return imp ? imp.module : null;
+  };
+  const insideMakeStyles = (node) => !!node.getFirstAncestor((a) => Node.isCallExpression(a) && h.resolveRef(a.getExpression(), b) === 'makeStyles');
+  const out = [];
+  const used = new Set();
+  const push = (node, api, local) => out.push({
+    file: file, line: h.lineOf(node), api: api, kind: h.usageKind(node), module: moduleOf(local), insideMakeStyles: insideMakeStyles(node),
+  });
+  for (const id of sf.getDescendantsOfKind(K.Identifier)) {
+    const local = id.getText();
+    if (b.named.has(local) && wanted.has(b.named.get(local)) && h.isReference(id)) { push(id, b.named.get(local), local); used.add(local); }
+  }
+  for (const pa of sf.getDescendantsOfKind(K.PropertyAccessExpression)) {
+    const obj = pa.getExpression();
+    if (Node.isIdentifier(obj) && b.ns.has(obj.getText()) && wanted.has(pa.getName())) push(pa, pa.getName(), obj.getText());
+  }
+  for (const imp of b.decls) {
+    for (const n of imp.named) {
+      if (wanted.has(n.name) && !used.has(n.local)) out.push({ file: file, line: imp.line, api: n.name, kind: 'import', module: imp.module, insideMakeStyles: false });
+    }
+  }
+  return out.sort((x, y) => x.line - y.line);
 }
 
 function analyzeAsyncEffects(sf, file, imports, h) {
@@ -801,8 +835,8 @@ function scan(root, deps) {
   });
 
   const inv = {
-    muiFiles: [], makeStyles: [], asyncEffects: [], reactDomApi: [], react18Only: [],
-    routerUsages: [], routerPost602: [], pickers: [], contextCrossing: [],
+    muiFiles: [], makeStyles: [], jssApis: [], asyncEffects: [], reactDomApi: [], react18Only: [],
+    routerImports: [], routerUsages: [], routerPost602: [], pickers: [], contextCrossing: [],
   };
   const routerTest = (m) => rules.router.modules.indexOf(m) !== -1;
   const pickerTest = (m) => rules.pickerModulePrefixes.some((p) => m === p || m.startsWith(p + '/') || m.startsWith(p + '-'));
@@ -834,6 +868,7 @@ function scan(root, deps) {
     if (mui.length) inv.muiFiles.push({ file: file, imports: mui });
 
     inv.makeStyles.push.apply(inv.makeStyles, analyzeMakeStyles(sf, file, imports, rules, h));
+    inv.jssApis.push.apply(inv.jssApis, analyzeJssApis(sf, file, imports, rules, h));
     inv.asyncEffects.push.apply(inv.asyncEffects, analyzeAsyncEffects(sf, file, imports, h));
 
     h.findUsages(sf, imports, (m) => m === 'react-dom', rules.reactDomLegacyApis)
@@ -863,6 +898,11 @@ function scan(root, deps) {
         });
       });
     }
+
+    // every router import – the evidence package-json.js needs before adding react-router-dom
+    imports.filter((imp) => routerTest(imp.module)).forEach((imp) => inv.routerImports.push({
+      file: file, line: imp.line, module: imp.module, names: imp.named.map((n) => n.name), default: imp.defaultLocal,
+    }));
 
     imports.filter((imp) => pickerTest(imp.module)).forEach((imp) => inv.pickers.push({
       file: file, line: imp.line, module: imp.module, names: imp.named.map((n) => n.name), default: imp.defaultLocal,
@@ -933,10 +973,12 @@ function scan(root, deps) {
       blockers: checkDenyList(fs, root, pkg, denyList),
       muiFiles: inv.muiFiles,
       makeStyles: inv.makeStyles,
+      jssApis: inv.jssApis,
       asyncEffects: inv.asyncEffects,
       reactDomApi: inv.reactDomApi,
       react18Only: inv.react18Only,
       routerVersion: versionInfo('react-router-dom'),
+      routerImports: inv.routerImports,
       routerUsages: inv.routerUsages,
       routerPost602: inv.routerPost602,
       federation: federation,
@@ -959,7 +1001,7 @@ function countBy(list, fn) {
 
 function formatText(res) {
   const L = [];
-  if (res.result === 'BLOCKED') {
+  if (res.result === 'BLOCKED' && !res.inventory) {
     L.push('⛔ הסריקה נכשלה');
     res.blockers.forEach((b) => L.push('   ' + b.message));
     L.push('RESULT: BLOCKED');
@@ -985,6 +1027,15 @@ function formatText(res) {
     if (empty) L.push(pad + '🧹 ' + empty + ' מפתחות ריקים/מוערים ב-makeStyles');
   } else {
     L.push(pad + 'אין מופעי makeStyles');
+  }
+  if (inv.jssApis.length) {
+    // שובר את ה-build: ייבוא מ-@material-ui (החבילה מוסרת) שאינו createStyles בתוך makeStyles
+    const breaking = inv.jssApis.filter((u) => /^@material-ui\//.test(u.module || '') && !u.insideMakeStyles);
+    const c = countBy(breaking, (u) => u.api);
+    const rest = inv.jssApis.length - breaking.length;
+    L.push(pad + '🧱 JSS ללא המרה: ' + (breaking.length ? Array.from(c.keys()).map((k) => k + ' ×' + c.get(k)).join(', ') +
+      ' ב-' + new Set(breaking.map((u) => u.file)).size + ' קבצים' : 'אין שימושים שוברים') +
+      (rest ? ' (+' + rest + ' בתוך makeStyles / מ-@mui/styles)' : ''));
   }
   if (inv.asyncEffects.length) L.push(pad + '⏳ ' + inv.asyncEffects.length + ' useEffect עם פונקציה async');
   if (inv.reactDomApi.length) {
@@ -1036,6 +1087,8 @@ function formatText(res) {
   }
   L.push(pad + '💾 ' + res.outputStatus);
   res.notes.forEach((n) => L.push(pad + 'הערה: ' + n));
+  if (res.result === 'BLOCKED') L.push('⛔ ' + res.blockers.length + ' חסמים – יש לטפל בחבילות הלא תואמות לפני שנוגעים בקוד');
+  else if (res.result === 'REVIEW') L.push('⏸ ' + res.manual.length + ' פריטים לבדיקה לפני שממשיכים');
   L.push('RESULT: ' + res.result);
   return L.join('\n') + '\n';
 }
@@ -1085,6 +1138,20 @@ function run(argv, overrides) {
   inventory.warnings.filter((w) => w.file && w.line).forEach((w) => {
     base.manual.push({ file: w.file, line: w.line, reason: w.message });
   });
+
+  // RESULT: deny-list → BLOCKED (the pipeline stops before any code is touched);
+  // React-18-only / post-6.0.2 router APIs, or a deny-list match with unknown version → REVIEW
+  inventory.blockers.forEach((b) => {
+    const fix = [b.fixedIn ? 'שדרוג ל-' + b.fixedIn : null, b.alternative ? 'החלפה ב-' + b.alternative : null].filter(Boolean).join(' או ');
+    const message = 'חבילה לא תואמת React 18: ' + b.package + ' ' + b.range + ' (' + b.sections.join(', ') + ') – ' + b.reason;
+    if (b.uncertain) {
+      base.manual.push({ file: 'package.json', line: null, reason: message + '. הגרסה לא ודאית (' + b.range + ', לא מותקנת) – ודא ידנית' + (fix ? '; אם אינה תואמת: ' + fix : '') });
+    } else {
+      base.blockers.push({ message: message, package: b.package, range: b.range, suggestion: fix || null });
+    }
+  });
+  if (base.blockers.length) base.result = 'BLOCKED';
+  else if (inventory.react18Only.length || inventory.routerPost602.length || inventory.blockers.length) base.result = 'REVIEW';
   return Object.assign(base, { output: outRel, outputStatus: outputStatus, inventory: inventory });
 }
 

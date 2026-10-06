@@ -12,10 +12,15 @@ const SOURCE_EXTS = ['.js', '.jsx', '.ts', '.tsx'];
 const SKIP_DIRS = new Set(['node_modules', 'build', 'dist']);
 const EFFECT_HOOKS = ['useEffect', 'useLayoutEffect'];
 const STATE_HOOKS = ['useState', 'useReducer'];
-const SETTER_NAME = /^set[A-Z]\w*$/; // setters that arrive as props (props.setLoading / setLoading)
+// משמש רק לסימון review של פונקציה שהגיעה כ-prop – לעולם לא כדי להחליט מה לעטוף
+const PROP_SETTER_NAME = /^set[A-Z]\w*$/;
 
 class CodemodError extends Error {}
 class Manual extends Error {}
+// a bug in this codemod (two edits on the same range) – expected enough to report as BLOCKED, not crash
+class EditConflict extends Error {
+  constructor(pos) { super('overlapping edits at ' + pos); this.pos = pos; }
+}
 
 function parseArgs(argv) {
   const opts = { dryRun: false, json: false, guard: true, errors: [] };
@@ -51,10 +56,11 @@ function listSourceFiles(fs, root) {
   return out;
 }
 
-function applyEdits(text, edits) {
+// base: offset of `text` inside the file, so a conflict in a slice still reports a file position
+function applyEdits(text, edits, base) {
   const sorted = edits.slice().sort((a, b) => b.start - a.start || b.end - a.end);
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].end > sorted[i - 1].start) throw new Error('overlapping edits at ' + sorted[i].start);
+    if (sorted[i].end > sorted[i - 1].start) throw new EditConflict((base || 0) + sorted[i - 1].start);
   }
   return sorted.reduce((t, e) => t.slice(0, e.start) + e.text + t.slice(e.end), text);
 }
@@ -107,8 +113,9 @@ function transformFile(tsm, sf, file, opts) {
     try {
       const edit = transformEffect(effect, fn);
       edits.push(edit);
-      changes.push({ file: file, line: line, rule: 'EFFECT.ASYNC', confidence: 'auto',
-        detail: reactApi(effect.getExpression()) + '(async …) → ' + (opts.guard ? 'run() + cancelled guard' : 'run()') });
+      changes.push({ file: file, line: line, rule: 'EFFECT.ASYNC', confidence: edit.review ? 'review' : 'auto',
+        detail: reactApi(effect.getExpression()) + '(async …) → ' + (opts.guard ? 'run() + cancelled guard' : 'run()'),
+        reason: edit.review || undefined });
     } catch (err) {
       if (!(err instanceof Manual)) throw err;
       manual.push({ file: file, line: line, reason: 'useEffect אסינכרוני לא הומר: ' + err.message });
@@ -142,21 +149,50 @@ function transformFile(tsm, sf, file, opts) {
       scopeNames.add(n);
       return n;
     };
+    // setters = only identifiers declared as `const [x, setX] = useState(...)` / useReducer in the component itself
+    const declaredInComponent = (n) => (ownerFn(n) || sf) === component;
     const setters = new Set();
-    component.getDescendantsOfKind(K.VariableDeclaration).forEach((v) => {
-      const init = v.getInitializer();
+    component.getDescendantsOfKind(K.VariableDeclaration).filter(declaredInComponent).forEach((v) => {
+      const init = unwrap(v.getInitializer());
       const nameNode = v.getNameNode();
       if (!init || !Node.isCallExpression(init) || !Node.isArrayBindingPattern(nameNode)) return;
       if (STATE_HOOKS.indexOf(reactApi(init.getExpression())) === -1) return;
       const el = nameNode.getElements()[1];
-      if (el && Node.isBindingElement(el)) setters.add(el.getName());
+      if (el && Node.isBindingElement(el) && Node.isIdentifier(el.getNameNode())) setters.add(el.getName());
     });
+    // setter מ-useState הוא תמיד מזהה פשוט – x.setY(...) לעולם אינו נעטף
     const isSetState = (call) => {
       const c = call.getExpression();
-      if (Node.isIdentifier(c)) return setters.has(c.getText()) || SETTER_NAME.test(c.getText());
-      if (Node.isPropertyAccessExpression(c)) return SETTER_NAME.test(c.getName());
-      return false;
+      return Node.isIdentifier(c) && setters.has(c.getText());
     };
+
+    // props: ({ a, setB }) / (props) + props.setB / const { setB } = props
+    const propLocals = new Set();
+    let propsName = null;
+    const param = component !== sf && component.getParameters ? component.getParameters()[0] : null;
+    if (param) {
+      const pn = param.getNameNode();
+      if (Node.isObjectBindingPattern(pn)) pn.getElements().forEach((el) => propLocals.add(el.getName()));
+      else if (Node.isIdentifier(pn)) propsName = pn.getText();
+    }
+    if (propsName) {
+      component.getDescendantsOfKind(K.VariableDeclaration).filter(declaredInComponent).forEach((v) => {
+        const init = unwrap(v.getInitializer());
+        if (init && Node.isIdentifier(init) && init.getText() === propsName && Node.isObjectBindingPattern(v.getNameNode())) {
+          v.getNameNode().getElements().forEach((el) => propLocals.add(el.getName()));
+        }
+      });
+    }
+    // setter שהגיע כ-prop – אי אפשר לדעת אם הוא מעדכן state; לא עוטפים, מסמנים review
+    const propSetterCalls = opts.guard && awaits.length ? fn.getDescendantsOfKind(K.CallExpression).filter((call) => {
+      const c = call.getExpression();
+      if (Node.isIdentifier(c)) return propLocals.has(c.getText()) && !setters.has(c.getText()) && PROP_SETTER_NAME.test(c.getText());
+      return Node.isPropertyAccessExpression(c) && !!propsName && Node.isIdentifier(c.getExpression()) &&
+        c.getExpression().getText() === propsName && PROP_SETTER_NAME.test(c.getName());
+    }).map((call) => call.getExpression().getText()) : [];
+    const review = propSetterCalls.length
+      ? 'קריאה ל-' + Array.from(new Set(propSetterCalls)).join(', ') + ' – פונקציה שהגיעה כ-prop ולא מ-useState מקומי, ולכן לא נעטפה ב-cancelled guard. ודא ידנית אם היא מעדכנת state אחרי await'
+      : null;
 
     // body → statements
     const body = fn.getBody();
@@ -281,7 +317,7 @@ function transformFile(tsm, sf, file, opts) {
         inner.push({ start: prev, end: cleanup.ret.getEnd(), text: '' });
       }
       const shifted = inner.map((e) => ({ start: e.start - start, end: e.end - start, text: e.text }));
-      const content = applyEdits(text.slice(start, end), shifted);
+      const content = applyEdits(text.slice(start, end), shifted, start);
       const multilineTemplate = fn.getDescendants().some((d) =>
         (Node.isTemplateExpression(d) || Node.isNoSubstitutionTemplateLiteral(d)) && d.getStartLineNumber() !== d.getEndLineNumber());
       let lines = content.split(/\r?\n/);
@@ -324,7 +360,7 @@ function transformFile(tsm, sf, file, opts) {
       out.push(i1 + 'return () => { ' + cancelled + ' = true; };');
     }
     out.push(base + '}');
-    return { start: fn.getStart(), end: fn.getEnd(), text: out.join(eol) };
+    return { start: fn.getStart(), end: fn.getEnd(), text: out.join(eol), review: review };
   }
 
   return { edits: edits, changes: changes, manual: manual };
@@ -332,8 +368,13 @@ function transformFile(tsm, sf, file, opts) {
 
 // ---------------------------------------------------------------------------
 
+function conflictMessage(rel, text, err) {
+  const line = text.slice(0, err.pos).split('\n').length;
+  return rel + ':' + line + ' – ' + SCRIPT + ' יצר שתי עריכות חופפות באותו מקום (באג בקודמוד). הקובץ לא שונה – יש להמיר אותו ידנית או לדווח על הבאג';
+}
+
 function run(argv, overrides) {
-  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd() }, overrides || {});
+  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd(), applyEdits: applyEdits }, overrides || {});
   const opts = parseArgs(argv || []);
   const res = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, cancelGuard: opts.guard, filesChanged: [] };
   const blocked = (m) => { res.result = 'BLOCKED'; res.blockers.push({ message: m }); return res; };
@@ -362,12 +403,21 @@ function run(argv, overrides) {
     const bom = raw.charCodeAt(0) === 0xfeff ? '﻿' : '';
     const text = bom ? raw.slice(1) : raw;
     const sf = project.createSourceFile('/' + rel, text, { overwrite: true });
-    const r = transformFile(tsm, sf, rel, opts);
-    project.removeSourceFile(sf);
+    let r;
+    let out = text;
+    try {
+      r = transformFile(tsm, sf, rel, opts);
+      if (r.edits.length) out = deps.applyEdits(text, r.edits);
+    } catch (err) {
+      if (!(err instanceof EditConflict)) throw err;
+      res.blockers.push({ file: rel, message: conflictMessage(rel, text, err) });
+      continue; // הקובץ לא נכתב, והשינויים שלו לא מדווחים
+    } finally {
+      project.removeSourceFile(sf);
+    }
     res.changes.push.apply(res.changes, r.changes);
     res.manual.push.apply(res.manual, r.manual);
     if (!r.edits.length) continue;
-    const out = applyEdits(text, r.edits);
     res.filesChanged.push(rel);
     if (!opts.dryRun) {
       try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('לא ניתן לכתוב את ' + rel + ': ' + err.message); }
@@ -375,17 +425,19 @@ function run(argv, overrides) {
   }
 
   if (!opts.guard && res.changes.length) res.notes.push('הומר ללא cancelled guard (--no-cancel-guard)');
-  if (res.changes.length === 0 && res.manual.length === 0) res.result = 'NOOP';
-  else if (res.manual.length) res.result = 'REVIEW';
+  if (res.blockers.length) res.result = 'BLOCKED';
+  else if (res.changes.length === 0 && res.manual.length === 0) res.result = 'NOOP';
+  else if (res.manual.length || res.changes.some((c) => c.confidence === 'review')) res.result = 'REVIEW';
   return res;
 }
 
 function formatText(res) {
   const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '') + (res.cancelGuard ? '' : ' [--no-cancel-guard]')];
-  if (res.result === 'BLOCKED') res.blockers.forEach((b) => L.push('⛔ ' + b.message));
-  else {
+  res.blockers.forEach((b) => L.push('⛔ ' + b.message));
+  // BLOCKED of a single file still has a summary of the rest; a precondition BLOCKED (no src/ …) has nothing else
+  if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
     L.push('⏳ ' + res.changes.length + ' useEffect אסינכרוניים הומרו ב-' + res.filesChanged.length + ' קבצים' + (res.dryRun ? ' (dry-run)' : ''));
-    res.changes.forEach((c) => L.push('   ✓ ' + c.file + ':' + c.line));
+    res.changes.forEach((c) => L.push((c.confidence === 'review' ? '   🔍 ' : '   ✓ ') + c.file + ':' + c.line + (c.reason ? ' – ' + c.reason : '')));
     res.manual.forEach((m) => L.push('✋ ' + m.file + ':' + m.line + ' – ' + m.reason));
     res.notes.forEach((n) => L.push('ℹ ' + n));
   }
@@ -411,4 +463,4 @@ if (require.main === module) {
   process.stdout.write('', () => process.exit(code));
 }
 
-module.exports = { run: run, main: main };
+module.exports = { run: run, main: main, applyEdits: applyEdits };

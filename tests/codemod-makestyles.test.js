@@ -211,3 +211,25 @@ test('mui-slots.json covers the required components; Popper has no paper slot', 
     .forEach((c) => assert.ok(SLOTS.components[c], c));
   assert.strictEqual(SLOTS.components.Popper.slots.paper, undefined);
 });
+
+// ---- expected failures → BLOCKED, exit 0 ----
+
+const { applyEdits } = require('../scripts/codemod-makestyles');
+// Two identical edits make the real applyEdits detect an overlap – a codemod bug no input triggers on purpose.
+const overlapping = (text, edits) => {
+  const p = edits[0].start;
+  return applyEdits(text, edits.concat([{ start: p, end: p + 1, text: 'X' }, { start: p, end: p + 1, text: 'Y' }]));
+};
+
+test('overlapping edits → BLOCKED with file:line, exit 0, file untouched, no changes reported', () => {
+  const f = fixture('theme-level');
+  const root = repo({ 'src/Report.jsx': f.input });
+  let out = '';
+  const code = main([], { cwd: root, applyEdits: overlapping }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
+  assert.strictEqual(code, 0);
+  assert.match(out, /⛔ src\/Report\.jsx:\d+ – codemod-makestyles יצר שתי עריכות חופפות באותו מקום/);
+  assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: BLOCKED');
+  assert.strictEqual(readIn(root, 'src/Report.jsx'), f.input);
+  const res = run([], { cwd: repo({ 'src/Report.jsx': f.input }), applyEdits: overlapping });
+  assert.deepStrictEqual(res.changes, []);
+});

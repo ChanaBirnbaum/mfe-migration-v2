@@ -194,3 +194,32 @@ test('--dry-run writes nothing; --json contract; missing src → BLOCKED', () =>
   assert.strictEqual(main([], { cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'react18-test-')) }, { stdout: (s) => { out += s; }, stderr: () => {} }), 0);
   assert.match(out, /RESULT: BLOCKED\n$/);
 });
+
+// ---- expected failures → BLOCKED, exit 0 ----
+
+// Two identical edits make the real applyEdits detect an overlap – a codemod bug no input triggers on purpose.
+const { applyEdits } = require('../scripts/codemod-react18');
+const overlapping = (onlyIf) => (text, edits) => {
+  if (text.indexOf(onlyIf) === -1) return applyEdits(text, edits);
+  const p = edits[0].start;
+  return applyEdits(text, edits.concat([{ start: p, end: p + 1, text: 'X' }, { start: p, end: p + 1, text: 'Y' }]));
+};
+
+test('overlapping edits → BLOCKED with file:line, exit 0, that file untouched, other files still converted', () => {
+  const bootstrap = fixture('bootstrap-plain').input;
+  const card = "import React from 'react';\nexport function Card({ title }) { return <h1>{title}</h1>; }\nCard.defaultProps = { title: 'x' };\n";
+  const root = repo({ 'src/bootstrap.jsx': bootstrap, 'src/Card.jsx': card });
+  let out = '';
+  const code = main([], { cwd: root, applyEdits: overlapping('ReactDOM.render') }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
+  assert.strictEqual(code, 0);
+  // line 2: the first edit is the 'react-dom' → 'react-dom/client' specifier
+  assert.match(out, /⛔ src\/bootstrap\.jsx:2 – codemod-react18 יצר שתי עריכות חופפות באותו מקום \(באג בקודמוד\)\. הקובץ לא שונה/);
+  assert.match(out, /✏️ 1 קבצים שונו/); // the summary of the rest is still printed
+  assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: BLOCKED');
+  assert.strictEqual(readIn(root, 'src/bootstrap.jsx'), bootstrap);
+  assert.doesNotMatch(readIn(root, 'src/Card.jsx'), /defaultProps/);
+
+  const res = run(['--dry-run'], { cwd: repo({ 'src/bootstrap.jsx': bootstrap, 'src/Card.jsx': card }), applyEdits: overlapping('ReactDOM.render') });
+  assert.deepStrictEqual(res.blockers.map((b) => b.file), ['src/bootstrap.jsx']);
+  assert.ok(res.changes.every((c) => c.file === 'src/Card.jsx'), 'changes of the blocked file are not reported');
+});

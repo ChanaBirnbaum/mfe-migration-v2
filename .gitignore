@@ -1,1 +1,3 @@
 node_modules/
+# working state of a migration – belongs to the service repo, never to the skill
+.migration/

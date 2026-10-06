@@ -9,6 +9,8 @@ const path = require('path');
 
 const SCRIPT = 'package-json';
 const VERSIONS_FILE = path.join(__dirname, '..', 'reference', 'versions.json');
+const SCAN_RULES_FILE = path.join(__dirname, '..', 'reference', 'scan-rules.json');
+const PICKERS_REASON = 'מעבר מ-pickers v3/v5 ל-x-date-pickers v9 — שינויי API נרחבים, דורש בדיקה ידנית';
 const DEFAULT_INVENTORY = '.migration/inventory.json';
 const NPM_TIMEOUT_MS = 15000;
 
@@ -182,13 +184,12 @@ function defaultNpmView(name) {
   return v;
 }
 
-function iconsUsage(fs, invPath) {
-  let inv;
-  try {
-    inv = JSON.parse(fs.readFileSync(invPath, 'utf8'));
-  } catch (_) {
-    return null; // unknown
-  }
+function readInventory(fs, invPath) {
+  try { return JSON.parse(fs.readFileSync(invPath, 'utf8')); } catch (_) { return null; }
+}
+
+function iconsUsage(inv) {
+  if (!inv) return null; // unknown
   return (inv.muiFiles || []).some((f) => (f.imports || []).some((i) => /^@material-ui\/icons(\/|$)/.test(i.module)));
 }
 
@@ -208,11 +209,15 @@ function run(argv, overrides) {
   }
 
   let versions;
+  let pickerPrefixes;
   try {
     versions = JSON.parse(require('fs').readFileSync(VERSIONS_FILE, 'utf8'));
+    pickerPrefixes = JSON.parse(require('fs').readFileSync(SCAN_RULES_FILE, 'utf8')).pickerModulePrefixes;
   } catch (err) {
-    return blocked('לא ניתן לטעון את reference/versions.json: ' + err.message);
+    return blocked('לא ניתן לטעון את reference/versions.json / scan-rules.json: ' + err.message);
   }
+  const isPicker = (name) => pickerPrefixes.some((p) => name === p || name.startsWith(p + '/'));
+  const inventory = readInventory(deps.fs, path.resolve(deps.cwd, opts.inventory));
 
   const pkgPath = path.join(deps.cwd, 'package.json');
   let original;
@@ -233,7 +238,11 @@ function run(argv, overrides) {
 
   const D = 'dependencies';
   const DEV = 'devDependencies';
-  const change = (rule, detail) => res.changes.push({ file: 'package.json', rule: rule, confidence: 'auto', detail: detail });
+  // שדרוג / הסרה של חבילת pickers – החלטה סגורה: review. הוספה בלבד (לא הוצהר קודם) אינה מעבר של קוד קיים
+  const change = (rule, detail, name) => {
+    const review = !!name && isPicker(name) && (rule === 'PKG.UPDATE' || rule === 'PKG.REMOVE');
+    res.changes.push({ file: 'package.json', rule: rule, confidence: review ? 'review' : 'auto', detail: detail, reason: review ? PICKERS_REASON : undefined });
+  };
   const inDeps = (name) => ed.get(D, name) !== undefined;
   const inDev = (name) => ed.get(DEV, name) !== undefined;
 
@@ -246,7 +255,7 @@ function run(argv, overrides) {
 
   // 1. remove @material-ui/*
   versions.remove.forEach((name) => {
-    if (ed.remove(D, name)) change('PKG.REMOVE', name);
+    if (ed.remove(D, name)) change('PKG.REMOVE', name, name);
     if (inDev(name)) res.notes.push(name + ' נמצא ב-devDependencies – לא הוסר (מחוץ להיקף)');
   });
 
@@ -254,19 +263,33 @@ function run(argv, overrides) {
     const wasOnlyDev = !inDeps(name) && inDev(name);
     const action = ed.set(D, name, range, { sorted: true });
     if (!action) return;
-    change(action === 'add' ? 'PKG.ADD' : 'PKG.UPDATE', name + ' ' + range + (why ? ' (' + why + ')' : ''));
+    change(action === 'add' ? 'PKG.ADD' : 'PKG.UPDATE', name + ' ' + range + (why ? ' (' + why + ')' : ''), name);
     // buildSharedGen1 מתעלמת מ-devDependencies – בלי הצהרה ב-dependencies הבנייה תיכשל
     if (wasOnlyDev) res.notes.push(name + ' היה רק ב-devDependencies – נוסף ל-dependencies (buildSharedGen1 מתעלמת מ-devDependencies)');
   };
 
   // 2 + 8. target versions (adds to dependencies also when only in devDependencies)
-  dataKeys(versions.dependencies).forEach((name) => setDep(name, versions.dependencies[name]));
+  // usageGated (react-router-dom): קיים → מעודכן ולעולם לא מוסר; לא קיים → נוסף רק אם המלאי מראה שימוש.
+  // אין צורך "ליתר ביטחון": buildSharedGen1 מכניסה את react-router לקטלוג גם בלי הצהרה, אם הוא מותקן
+  const gated = versions.usageGated || {};
+  dataKeys(versions.dependencies).forEach((name) => {
+    const range = versions.dependencies[name];
+    if (!gated[name] || inDeps(name) || inDev(name)) return setDep(name, range);
+    const used = inventory && inventory[gated[name]];
+    if (!Array.isArray(used)) {
+      res.notes.push(name + ' לא נוסף – אינו מוצהר ב-package.json ואין inventory עדכני לאימות שימוש (הרץ scan.js)');
+    } else if (!used.length) {
+      res.notes.push(name + ' לא נוסף – אינו מוצהר ב-package.json והמלאי לא מראה בו שימוש');
+    } else {
+      setDep(name, range, 'בשימוש לפי inventory');
+    }
+  });
 
   // 3. icons – only when used or already declared
   dataKeys(versions.conditionalDependencies).forEach((name) => {
     const range = versions.conditionalDependencies[name];
     if (inDeps(name)) return setDep(name, range);
-    const usage = iconsUsage(deps.fs, path.resolve(deps.cwd, opts.inventory));
+    const usage = iconsUsage(inventory);
     if (usage === true) setDep(name, range, 'בשימוש לפי inventory');
     else if (usage === null && iconsV4Declared) {
       setDep(name, range, 'אין inventory');
@@ -316,13 +339,39 @@ function run(argv, overrides) {
   const tools = versions.buildTools.filter((t) => inDeps(t));
   if (tools.length) res.notes.push('כלי build ב-dependencies (לא הוזזו): ' + tools.join(', '));
 
+  // 10. pickers – one manual item per file that uses them (first import line in the file)
+  if (res.changes.some((c) => c.confidence === 'review' && c.reason === PICKERS_REASON)) {
+    res.result = 'REVIEW';
+    if (!inventory) {
+      res.manual.push({ file: 'package.json', line: null, reason: PICKERS_REASON + '. אין inventory – הרץ scan.js כדי לאתר את הקבצים שמשתמשים ב-pickers' });
+    } else {
+      const seen = new Set();
+      (inventory.pickers || []).filter((p) => isPicker(p.module || '')).forEach((p) => {
+        if (seen.has(p.file)) return;
+        seen.add(p.file);
+        res.manual.push({ file: p.file, line: p.line || null, reason: PICKERS_REASON });
+      });
+    }
+  }
+
   const updated = ed.text();
   if (updated === original) {
     if (res.result === 'OK') res.result = 'NOOP';
     return res;
   }
-  // sanity: the result must still be valid JSON
-  JSON.parse(updated.replace(/^﻿/, ''));
+  // sanity: the result must still be valid JSON. The TS parser accepts comments and trailing commas,
+  // JSON.parse (and npm) do not – so this fails on such a file even when the edit itself is fine.
+  try {
+    JSON.parse(updated.replace(/^﻿/, ''));
+  } catch (err) {
+    let originalError = null;
+    try { JSON.parse(original.replace(/^﻿/, '')); } catch (e) { originalError = e.message; }
+    res.changes = [];
+    res.manual = []; // describe edits that were not written
+    return blocked(originalError
+      ? 'package.json: הקובץ המקורי אינו JSON תקין (' + originalError + ') – כנראה הערה או פסיק מיותר, ש-npm לא יקרא. תקן ידנית והרץ שוב. הקובץ לא נכתב'
+      : 'package.json: העריכה יצרה JSON לא תקין (' + err.message + ') – באג ב-' + SCRIPT + '. הקובץ לא נכתב');
+  }
   if (!opts.dryRun) {
     try {
       deps.fs.writeFileSync(pkgPath, updated, 'utf8');
@@ -336,9 +385,9 @@ function run(argv, overrides) {
 function formatText(res) {
   const L = ['package-json' + (res.dryRun ? ' [dry-run]' : '')];
   const sym = { 'PKG.REMOVE': '−', 'PKG.ADD': '+', 'PKG.UPDATE': '↑', 'PKG.VERSION': '↑', 'PKG.ADD_BLOCK': '+' };
-  res.changes.forEach((c) => L.push('  ' + (sym[c.rule] || '•') + ' ' + c.detail));
+  res.changes.forEach((c) => L.push('  ' + (sym[c.rule] || '•') + ' ' + c.detail + (c.confidence === 'review' ? ' 🔍' : '')));
   if (!res.changes.length && res.result !== 'BLOCKED') L.push('  אין שינויים');
-  res.manual.forEach((m) => L.push('  ⚠ ' + m.reason));
+  res.manual.forEach((m) => L.push('  ⚠ ' + (m.file && m.file !== 'package.json' ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason));
   res.notes.forEach((n) => L.push('  ℹ ' + n));
   res.blockers.forEach((b) => L.push('  ⛔ ' + b.message));
   L.push('RESULT: ' + res.result);

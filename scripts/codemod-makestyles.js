@@ -23,6 +23,10 @@ class CodemodError extends Error {}
 class Manual extends Error {
   constructor(message, line) { super(message); this.line = line; }
 }
+// a bug in this codemod (two edits on the same range) – expected enough to report as BLOCKED, not crash
+class EditConflict extends Error {
+  constructor(pos) { super('overlapping edits at ' + pos); this.pos = pos; }
+}
 
 function parseArgs(argv) {
   const opts = { dryRun: false, json: false, errors: [] };
@@ -57,10 +61,11 @@ function listSourceFiles(fs, root) {
   return out;
 }
 
-function applyEdits(text, edits) {
+// base: offset of `text` inside the file, so a conflict in a slice still reports a file position
+function applyEdits(text, edits, base) {
   const sorted = edits.slice().sort((a, b) => b.start - a.start || b.end - a.end);
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].end > sorted[i - 1].start) throw new Error('overlapping edits at ' + sorted[i].start);
+    if (sorted[i].end > sorted[i - 1].start) throw new EditConflict((base || 0) + sorted[i - 1].start);
   }
   return sorted.reduce((t, e) => t.slice(0, e.start) + e.text + t.slice(e.end), text);
 }
@@ -81,7 +86,8 @@ const quoteKey = (s) => "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'
 
 // ---------------------------------------------------------------------------
 
-function transformFile(tsm, sf, file, table, rules) {
+function transformFile(tsm, sf, file, table, rules, apply) {
+  apply = apply || applyEdits;
   const { Node, SyntaxKind: K } = tsm;
   const text = sf.getFullText();
   const eol = text.indexOf('\r\n') !== -1 ? '\r\n' : '\n';
@@ -546,7 +552,7 @@ function transformFile(tsm, sf, file, table, rules) {
       }
     });
 
-    const objText = applyEdits(text.slice(base, obj.getEnd()), local.map((e) => ({ start: e.start - base, end: e.end - base, text: e.text })));
+    const objText = applyEdits(text.slice(base, obj.getEnd()), local.map((e) => ({ start: e.start - base, end: e.end - base, text: e.text })), base);
     edits.push({ start: inst.stmt.getStart(), end: inst.stmt.getEnd(), text: 'const ' + inst.stylesName + ' = ' + objText + ';' });
     inst.classesStmts.forEach((vs) => { const r = wholeLineRange(text, vs.getStart(), vs.getEnd()); edits.push({ start: r.start, end: r.end, text: '' }); });
     changes.push({
@@ -581,7 +587,7 @@ function transformFile(tsm, sf, file, table, rules) {
     });
   });
 
-  const out = applyEdits(text, edits);
+  const out = apply(text, edits);
 
   // =========================================================================
   // 4. validation – on any failure the file is left untouched
@@ -613,8 +619,13 @@ function transformFile(tsm, sf, file, table, rules) {
 
 // ---------------------------------------------------------------------------
 
+function conflictMessage(rel, text, err) {
+  const line = text.slice(0, err.pos).split('\n').length;
+  return rel + ':' + line + ' – ' + SCRIPT + ' יצר שתי עריכות חופפות באותו מקום (באג בקודמוד). הקובץ לא שונה – יש להמיר אותו ידנית או לדווח על הבאג';
+}
+
 function run(argv, overrides) {
-  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd() }, overrides || {});
+  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd(), applyEdits: applyEdits }, overrides || {});
   const opts = parseArgs(argv || []);
   const res = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, filesChanged: [] };
   const blocked = (m) => { res.result = 'BLOCKED'; res.blockers.push({ message: m }); return res; };
@@ -653,8 +664,17 @@ function run(argv, overrides) {
     const bom = raw.charCodeAt(0) === 0xfeff ? '﻿' : '';
     const text = bom ? raw.slice(1) : raw;
     const sf = project.createSourceFile('/' + rel, text, { overwrite: true });
-    const r = transformFile(tsm, sf, rel, table, rules);
-    project.removeSourceFile(sf);
+    let r;
+    try {
+      r = transformFile(tsm, sf, rel, table, rules, deps.applyEdits);
+    } catch (err) {
+      if (!(err instanceof EditConflict)) throw err;
+      found++;
+      res.blockers.push({ file: rel, message: conflictMessage(rel, text, err) });
+      continue; // הקובץ לא נכתב, והשינויים שלו לא מדווחים
+    } finally {
+      project.removeSourceFile(sf);
+    }
     found += r.found;
     res.changes.push.apply(res.changes, r.changes);
     res.manual.push.apply(res.manual, r.manual);
@@ -666,7 +686,8 @@ function run(argv, overrides) {
   }
 
   const reviews = res.changes.filter((c) => c.confidence === 'review');
-  if (found === 0) res.result = 'NOOP';
+  if (res.blockers.length) res.result = 'BLOCKED';
+  else if (found === 0) res.result = 'NOOP';
   else if (res.manual.length || reviews.length) res.result = 'REVIEW';
   if (res.filesChanged.length) res.notes.push('הרץ build ובדוק ויזואלית את הרכיבים שהומרו – סדר העדיפויות של sx שונה מזה של JSS');
   return res;
@@ -674,8 +695,9 @@ function run(argv, overrides) {
 
 function formatText(res) {
   const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '')];
-  if (res.result === 'BLOCKED') res.blockers.forEach((b) => L.push('⛔ ' + b.message));
-  else {
+  res.blockers.forEach((b) => L.push('⛔ ' + b.message));
+  // BLOCKED of a single file still has a summary of the rest; a precondition BLOCKED (no src/ …) has nothing else
+  if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
     const byRule = {};
     res.changes.forEach((c) => { byRule[c.rule] = (byRule[c.rule] || 0) + 1; });
     L.push('🎨 ' + res.filesChanged.length + ' קבצים ' + (res.dryRun ? 'היו משתנים' : 'שונו') +
@@ -706,4 +728,4 @@ if (require.main === module) {
   process.stdout.write('', () => process.exit(code));
 }
 
-module.exports = { run: run, main: main };
+module.exports = { run: run, main: main, applyEdits: applyEdits };

@@ -2,6 +2,7 @@
   "sourceExtensions": [".js", ".jsx", ".ts", ".tsx"],
   "skipDirs": ["node_modules", "build", "dist"],
   "makeStylesModules": ["@material-ui/core", "@material-ui/core/styles", "@material-ui/styles", "@mui/styles"],
+  "jssApis": ["withStyles", "createStyles", "StylesProvider"],
   "pickerModulePrefixes": ["@material-ui/pickers", "@mui/x-date-pickers"],
   "react18OnlyHooks": ["useId", "useSyncExternalStore", "useTransition", "useDeferredValue", "useInsertionEffect"],
   "reactDomLegacyApis": ["render", "hydrate", "unmountComponentAtNode", "findDOMNode"],

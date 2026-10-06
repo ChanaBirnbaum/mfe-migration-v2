@@ -58,6 +58,13 @@ test('golden: complex (await in loop, several returns) → manual, file unchange
   assert.match(res.manual[1].reason, /return/);
 });
 
+test('golden: setTimeout / localStorage.setItem are not setters – only the useState setter is guarded', () => {
+  const { res, again } = golden('non-setters');
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.changes[0].confidence, 'auto');
+  assert.strictEqual(again.result, 'NOOP');
+});
+
 test('golden: --no-cancel-guard', () => {
   const { res } = golden('no-guard', ['--no-cancel-guard']);
   assert.strictEqual(res.result, 'OK');
@@ -99,6 +106,58 @@ test('brace-less if branch gets a block (no dangling else)', () => {
     '',
   ].join('\n'));
   assert.match(out, /if \(r\) \{ if \(!cancelled\) setV\(r\); \} else \{ if \(!cancelled\) setV\(null\); \}/);
+});
+
+test('setter-like prop (destructured) after await → not wrapped, effect marked review', () => {
+  const { res, out } = convert([
+    "import { useEffect, useState } from 'react';",
+    'export function A({ id, setTitle }) {',
+    '  const [v, setV] = useState();',
+    '  useEffect(async () => {',
+    '    const t = await load(id);',
+    '    setTitle(t);',
+    '    setV(t);',
+    '  }, [id]);',
+    '}',
+    '',
+  ].join('\n'));
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.strictEqual(res.changes[0].confidence, 'review');
+  assert.match(res.changes[0].reason, /setTitle/);
+  assert.match(out, /\n {6}setTitle\(t\);/);
+  assert.match(out, /if \(!cancelled\) setV\(t\);/);
+});
+
+test('props.setX(...) after await → not wrapped (property access), effect marked review', () => {
+  const { res, out } = convert([
+    "import { useEffect } from 'react';",
+    'export function A(props) {',
+    '  useEffect(async () => {',
+    '    const t = await load();',
+    '    props.setTitle(t);',
+    '  }, []);',
+    '}',
+    '',
+  ].join('\n'));
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.match(res.changes[0].reason, /props\.setTitle/);
+  assert.doesNotMatch(out, /if \(!cancelled\) props/);
+});
+
+test('setter-named function that is neither useState nor a prop → not wrapped, still auto', () => {
+  const { res, out } = convert([
+    "import { useEffect } from 'react';",
+    "import { setGlobalTitle } from './title';",
+    'export function A() {',
+    '  useEffect(async () => {',
+    '    setGlobalTitle(await load());',
+    '  }, []);',
+    '}',
+    '',
+  ].join('\n'));
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.changes[0].confidence, 'auto');
+  assert.match(out, /setGlobalTitle\(await load\(\)\);/);
 });
 
 test('cleanup that uses a variable declared in the effect body → manual', () => {
@@ -148,5 +207,27 @@ test('--dry-run writes nothing; --json contract', () => {
   const res = JSON.parse(out);
   assert.deepStrictEqual(Object.keys(res).slice(0, 6), ['script', 'result', 'changes', 'manual', 'blockers', 'notes']);
   assert.strictEqual(res.changes.length, 1);
+  assert.strictEqual(readIn(root, 'src/C.jsx'), f.input);
+});
+
+// ---- expected failures → BLOCKED, exit 0 ----
+
+const { applyEdits } = require('../scripts/codemod-anti-patterns');
+// Two identical edits make the real applyEdits detect an overlap – a codemod bug no input triggers on purpose.
+const overlapping = (text, edits) => {
+  const p = edits[0].start;
+  return applyEdits(text, edits.concat([{ start: p, end: p + 1, text: 'X' }, { start: p, end: p + 1, text: 'Y' }]));
+};
+
+test('overlapping edits → BLOCKED with file:line, exit 0, file untouched, no changes reported', () => {
+  const f = fixture('simple');
+  const root = repo({ 'src/C.jsx': f.input });
+  let out = '';
+  const code = main(['--json'], { cwd: root, applyEdits: overlapping }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
+  assert.strictEqual(code, 0);
+  const res = JSON.parse(out);
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.match(res.blockers[0].message, /^src\/C\.jsx:6 – codemod-anti-patterns יצר שתי עריכות חופפות/); // the async effect
+  assert.deepStrictEqual(res.changes, []);
   assert.strictEqual(readIn(root, 'src/C.jsx'), f.input);
 });

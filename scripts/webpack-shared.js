@@ -4,6 +4,7 @@
 // webpack-shared: ModuleFederationPlugin `shared` → buildSharedGen1({ pkg, require, role }).
 // Works on the standard dynamic config `module.exports = ({ sviva }) => {...}` as well as plain objects.
 // ts-morph only; position-based edits keep the rest of the file byte-for-byte identical.
+// --validate-only: never edits; requires + runs the config (needs node_modules). run.js runs it after install.
 
 const path = require('path');
 
@@ -16,19 +17,47 @@ const VALIDATE_TIMEOUT_MS = 60000;
 const VALIDATE_ENV = 'dev'; // npm run build:dev → --env sviva=dev
 
 function parseArgs(argv) {
-  const opts = { dryRun: false, json: false, errors: [] };
+  const opts = { dryRun: false, json: false, validateOnly: false, errors: [] };
   argv.forEach((a) => {
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
+    else if (a === '--validate-only') opts.validateOnly = true;
     else opts.errors.push('פרמטר לא מוכר: ' + a);
   });
   return opts;
 }
 
+// require() alone does not run ({ sviva }) => {...}; calling it is what reaches buildSharedGen1.
+// Read-only: executes the config in a child process, never writes.
+function validate(deps) {
+  const nm = path.join(deps.cwd, 'node_modules');
+  if (!deps.fs.existsSync(nm)) return { ran: false, reason: 'node_modules חסר' };
+  if (!deps.fs.existsSync(path.join(nm, SHARED_PKG))) return { ran: false, reason: SHARED_PKG + ' לא מותקן' };
+  const script = "const c = require('./" + CONFIG + "'); if (typeof c === 'function') c({ sviva: '" + VALIDATE_ENV + "' }, { mode: 'production' });";
+  try {
+    deps.execFileSync(process.execPath, ['-e', script], {
+      cwd: deps.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: VALIDATE_TIMEOUT_MS, windowsHide: true,
+    });
+    return { ran: true, ok: true, env: VALIDATE_ENV };
+  } catch (err) {
+    const timedOut = err.code === 'ETIMEDOUT';
+    // הפלט המלא – stderr ואז stdout – בלי קיצור; error הוא תקציר לשורת סיכום
+    const output = [err.stderr, err.stdout].map((s) => String(s || '').trimEnd()).filter(Boolean).join('\n') ||
+      (timedOut ? 'timeout אחרי ' + VALIDATE_TIMEOUT_MS / 1000 + ' שניות' : String(err.message || err));
+    const error = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4).join(' | ');
+    return { ran: true, ok: false, env: VALIDATE_ENV, error: error, output: output };
+  }
+}
+
+// a bug in this script (two edits on the same range) – expected enough to report as BLOCKED, not crash
+class EditConflict extends Error {
+  constructor(pos) { super('overlapping edits at ' + pos); this.pos = pos; }
+}
+
 function applyEdits(text, edits) {
   const sorted = edits.slice().sort((a, b) => b.start - a.start || b.end - a.end);
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].end > sorted[i - 1].start) throw new Error('overlapping edits at ' + sorted[i].start);
+    if (sorted[i].end > sorted[i - 1].start) throw new EditConflict(sorted[i - 1].start);
   }
   return sorted.reduce((t, e) => t.slice(0, e.start) + e.text + t.slice(e.end), text);
 }
@@ -165,10 +194,10 @@ function analyse(tsm, text) {
 
 function run(argv, overrides) {
   const deps = Object.assign({
-    fs: require('fs'), cwd: process.cwd(), execFileSync: require('child_process').execFileSync,
+    fs: require('fs'), cwd: process.cwd(), execFileSync: require('child_process').execFileSync, applyEdits: applyEdits,
   }, overrides || {});
   const opts = parseArgs(argv || []);
-  const res = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, role: null, validation: null };
+  const res = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, validateOnly: opts.validateOnly, role: null, validation: null };
   const blocked = (m) => { res.result = 'BLOCKED'; res.blockers.push({ message: m }); return res; };
   const review = (reason, code) => { res.result = 'REVIEW'; res.manual.push({ file: CONFIG, line: null, reason: reason, code: code || undefined }); return res; };
   if (opts.errors.length) return blocked(opts.errors.join('; '));
@@ -184,6 +213,31 @@ function run(argv, overrides) {
   const text = bom ? raw.slice(1) : raw;
   const { Node, SyntaxKind: K } = tsm;
   const a = analyse(tsm, text);
+
+  // --validate-only: runs after install (node_modules present). Never touches the file – also not on failure.
+  if (opts.validateOnly) {
+    if (a.plugins.length === 0) {
+      res.role = 'standalone';
+      res.result = 'NOOP';
+      res.notes.push('אין ModuleFederationPlugin – שירות standalone, אין shared לאמת');
+      return res;
+    }
+    if (!a.alreadyMigrated) {
+      return review('shared עדיין לא הומר ל-buildSharedGen1 – אין מה לאמת. הרץ webpack-shared בלי --validate-only, או הדבק ידנית את הקוד מהשלב הקודם');
+    }
+    res.validation = validate(deps);
+    if (!res.validation.ran) {
+      return blocked('לא ניתן לאמת את ' + CONFIG + ': ' + res.validation.reason + ' – הרץ קודם את install.js');
+    }
+    if (!res.validation.ok) {
+      res.result = 'REVIEW';
+      res.manual.push({ file: CONFIG, line: null, reason: 'הוולידציה נכשלה (sviva=' + VALIDATE_ENV + '): ' + res.validation.error + ' – ' + CONFIG + ' לא שונה', output: res.validation.output });
+      return res;
+    }
+    res.notes.push(CONFIG + ' נטען והופעל עם sviva=' + VALIDATE_ENV + ' – buildSharedGen1 עבר');
+    return res;
+  }
+
   res.notes.push.apply(res.notes, a.notes);
 
   if (a.alreadyMigrated) {
@@ -282,7 +336,17 @@ function run(argv, overrides) {
     res.changes.push({ file: CONFIG, line: last.getStartLineNumber(), rule: 'WEBPACK.SHARED', confidence: 'auto', detail: 'shared: ' + call + ' נוסף' });
   }
 
-  const out = applyEdits(text, edits);
+  let out;
+  try {
+    out = deps.applyEdits(text, edits);
+  } catch (err) {
+    if (!(err instanceof EditConflict)) throw err;
+    res.changes = [];
+    blocked(CONFIG + ':' + text.slice(0, err.pos).split('\n').length + ' – ' + SCRIPT +
+      ' יצר שתי עריכות חופפות באותו מקום (באג בסקריפט). הקובץ לא שונה – הדבק ידנית את הקוד');
+    res.blockers[res.blockers.length - 1].code = pasteCode(role, q);
+    return res;
+  }
   // sanity: still parses
   const check = new tsm.Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } }).createSourceFile('/check.js', out);
   const diags = check.compilerNode.parseDiagnostics || [];
@@ -297,44 +361,37 @@ function run(argv, overrides) {
   }
   try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('לא ניתן לכתוב את ' + CONFIG + ': ' + err.message); }
 
-  // ---- validation ----
-  const nm = path.join(deps.cwd, 'node_modules');
-  if (!deps.fs.existsSync(nm)) {
-    res.validation = { ran: false, reason: 'node_modules חסר' };
-    res.notes.push('node_modules חסר – הוולידציה דולגה. הרץ npm i ואז: node -e "require(\'./' + CONFIG + '\')"');
+  // ---- validation (only if already installed; in run.js it runs as the webpack-validate step after install) ----
+  res.validation = validate(deps);
+  if (!res.validation.ran) {
+    res.notes.push(res.validation.reason + ' – הוולידציה דולגה. אחרי npm install: node ' + __filename.split(path.sep).join('/') + ' --validate-only (ב-run.js: השלב webpack-validate)');
     return res;
   }
-  if (!deps.fs.existsSync(path.join(nm, SHARED_PKG))) {
-    res.validation = { ran: false, reason: SHARED_PKG + ' לא מותקן' };
-    res.notes.push(SHARED_PKG + ' עדיין לא מותקן ב-node_modules – הוולידציה דולגה. הרץ npm i ואז את הסקריפט שוב או את הוולידציה ידנית');
-    return res;
-  }
-  // require() alone does not run ({ sviva }) => {...}; calling it is what reaches buildSharedGen1
-  const script = "const c = require('./" + CONFIG + "'); if (typeof c === 'function') c({ sviva: '" + VALIDATE_ENV + "' }, { mode: 'production' });";
-  try {
-    deps.execFileSync(process.execPath, ['-e', script], {
-      cwd: deps.cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: VALIDATE_TIMEOUT_MS, windowsHide: true,
-    });
-    res.validation = { ran: true, ok: true, env: VALIDATE_ENV };
-  } catch (err) {
-    const msg = String(err.stderr || err.message || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4).join(' | ');
+  if (!res.validation.ok) {
     try { deps.fs.writeFileSync(full, raw, 'utf8'); } catch (_) { /* reported below */ }
-    res.validation = { ran: true, ok: false, env: VALIDATE_ENV, error: msg };
     res.changes = [];
-    return review('הוולידציה נכשלה (' + msg + ') – ' + CONFIG + ' הוחזר למצבו המקורי', pasteCode(role, q));
+    review('הוולידציה נכשלה (' + res.validation.error + ') – ' + CONFIG + ' הוחזר למצבו המקורי', pasteCode(role, q));
+    res.manual[res.manual.length - 1].output = res.validation.output;
+    return res;
   }
   return res;
 }
 
 function formatText(res) {
-  const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '')];
-  if (res.result === 'BLOCKED') res.blockers.forEach((b) => L.push('⛔ ' + b.message));
+  const L = [SCRIPT + (res.validateOnly ? ' [validate-only]' : '') + (res.dryRun ? ' [dry-run]' : '')];
+  if (res.result === 'BLOCKED') {
+    res.blockers.forEach((b) => {
+      L.push('⛔ ' + b.message);
+      if (b.code) { L.push('   קוד להדבקה:'); b.code.split('\n').forEach((l) => L.push('   | ' + l)); }
+    });
+  }
   else {
     if (res.role) L.push('🔗 role: ' + res.role);
     res.changes.forEach((c) => L.push('✏️ ' + CONFIG + ':' + c.line + ' – ' + c.detail));
     if (res.validation) L.push(res.validation.ran ? (res.validation.ok ? '✓ ולידציה עברה (sviva=' + res.validation.env + ')' : '⛔ ולידציה נכשלה: ' + res.validation.error) : '⚠ ולידציה דולגה: ' + res.validation.reason);
     res.manual.forEach((m) => {
       L.push('✋ ' + m.reason);
+      if (m.output) { L.push('   פלט השגיאה המלא:'); m.output.split(/\r?\n/).forEach((l) => L.push('   | ' + l)); }
       if (m.code) { L.push('   קוד להדבקה:'); m.code.split('\n').forEach((l) => L.push('   | ' + l)); }
     });
     res.notes.forEach((n) => L.push('ℹ ' + n));
@@ -361,4 +418,4 @@ if (require.main === module) {
   process.stdout.write('', () => process.exit(code));
 }
 
-module.exports = { run: run, main: main };
+module.exports = { run: run, main: main, applyEdits: applyEdits };

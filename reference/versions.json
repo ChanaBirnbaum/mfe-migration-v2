@@ -10,6 +10,10 @@
     "@mui/material": "^7.3.11",
     "@mui/x-date-pickers": "^9.3.0"
   },
+  "usageGated": {
+    "_comment": "Packages from 'dependencies' that are added only if already declared (dependencies or devDependencies) or the named scan inventory list is non-empty. Never removed when declared.",
+    "react-router-dom": "routerImports"
+  },
   "conditionalDependencies": {
     "@mui/icons-material": "^7.3.11"
   },

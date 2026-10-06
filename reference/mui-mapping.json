@@ -1,5 +1,5 @@
 {
-  "_comment": "Material-UI v4 -> MUI v7 import mapping. Data only – codemod-mui-imports.js reads it.",
+  "_comment": "Material-UI v4 -> MUI v7 import mapping. Data only – codemod-mui-imports.js reads it. manual messages are shown to the user verbatim.",
   "packages": {
     "@material-ui/core": { "target": "@mui/material" },
     "@material-ui/icons": { "target": "@mui/icons-material", "applyRenames": false },
@@ -19,7 +19,7 @@
     },
     "@material-ui/styles": {
       "target": null,
-      "manual": "ל-@material-ui/styles אין יעד ב-MUI v7 – מטופל ב-codemod-makestyles"
+      "manual": "ל-@material-ui/styles אין יעד ב-MUI v7. makeStyles מומר ב-codemod-makestyles; withStyles, createStyles ו-StylesProvider דורשים המרה ידנית"
     }
   },
   "renames": {
@@ -35,12 +35,12 @@
     "ExpansionPanelActions": "AccordionActions"
   },
   "manual": {
-    "makeStyles": "מטופל ב-codemod-makestyles",
-    "withStyles": "מטופל ב-codemod-makestyles",
-    "createStyles": "חלק מ-makeStyles – מטופל ב-codemod-makestyles",
-    "StylesProvider": "חלק מתשתית JSS – מטופל ב-codemod-makestyles",
-    "Hidden": "הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery / sx display)",
-    "withWidth": "הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery)"
+    "makeStyles": "makeStyles מומר ב-codemod-makestyles (מופעים שתלויים ב-props נשארים שם לטיפול ידני)",
+    "withStyles": "withStyles אינו נתמך ב-MUI v7. נדרשת המרה ידנית ל-styled() או sx",
+    "createStyles": "createStyles אינו נתמך ב-MUI v7. בתוך makeStyles הוא מוסר ב-codemod-makestyles; בכל שימוש אחר נדרשת המרה ידנית ל-styled() או sx",
+    "StylesProvider": "StylesProvider אינו נתמך ב-MUI v7. נדרשת המרה ידנית – בדרך כלל הסרה, או StyledEngineProvider עם injectFirst אם שימש לסדר טעינת ה-CSS",
+    "Hidden": "Hidden הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery / sx display)",
+    "withWidth": "withWidth הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery)"
   },
   "palette": {
     "from": "type",

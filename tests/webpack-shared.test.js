@@ -171,7 +171,82 @@ test('node_modules without @ips/mfe-shared-deps → validation skipped with note
   const res = run([], { cwd: repo(files) });
   assert.strictEqual(res.result, 'OK');
   assert.strictEqual(res.validation.ran, false);
-  assert.ok(res.notes.some((n) => /עדיין לא מותקן/.test(n)));
+  assert.ok(res.notes.some((n) => /לא מותקן – הוולידציה דולגה.*--validate-only/.test(n)));
+});
+
+// ---- --validate-only ----
+
+const validateOnly = (root, extra) => run(['--validate-only'].concat(extra || []), { cwd: root });
+const mtime = (root) => fs.statSync(path.join(root, 'webpack.config.js')).mtimeMs;
+
+test('--validate-only: migrated config + node_modules → OK, file not touched', () => {
+  const f = fixture('sviva-function');
+  const root = repo(Object.assign({ 'webpack.config.js': f.expected }, FAKE_MODULES));
+  const before = mtime(root);
+  const res = validateOnly(root);
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.manual));
+  assert.deepStrictEqual(res.validation, { ran: true, ok: true, env: 'dev' });
+  assert.deepStrictEqual(res.changes, []);
+  assert.strictEqual(cfg(root), f.expected);
+  assert.strictEqual(mtime(root), before);
+});
+
+test('--validate-only: failure → REVIEW with the full error output, file not touched', () => {
+  const f = fixture('sviva-function');
+  const root = repo(Object.assign({ 'webpack.config.js': f.expected }, FAKE_MODULES, {
+    // the message is built at run time, so "line5" never appears in the source line node echoes back
+    'node_modules/@ips/mfe-shared-deps/index.js': "exports.buildSharedGen1 = () => { throw new Error(['FederationConfigError: boom', 2, 3, 4, 5].map((x, i) => (i ? 'line' + x : x)).join('\\n')); };",
+  }));
+  const before = mtime(root);
+  let out = '';
+  main(['--validate-only'], { cwd: root }, { stdout: (s) => { out += s; }, stderr: () => {} });
+  const res = validateOnly(root);
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.strictEqual(res.validation.ok, false);
+  assert.strictEqual(res.manual.length, 1);
+  assert.strictEqual(res.manual[0].file, 'webpack.config.js');
+  // the summary is cut, the output is not: the 5th message line and the stack trace are there
+  assert.doesNotMatch(res.validation.error, /line5/);
+  assert.match(res.manual[0].output, /FederationConfigError: boom[\s\S]*line5[\s\S]*\n\s+at /);
+  assert.match(out, /פלט השגיאה המלא:[\s\S]*\| line5/);
+  assert.match(out, /RESULT: REVIEW\n$/);
+  assert.strictEqual(cfg(root), f.expected);
+  assert.strictEqual(mtime(root), before);
+});
+
+test('--validate-only: before install (no node_modules / package missing) → BLOCKED pointing to install.js', () => {
+  const f = fixture('sviva-function');
+  const noModules = validateOnly(repo({ 'webpack.config.js': f.expected }));
+  assert.strictEqual(noModules.result, 'BLOCKED');
+  assert.match(noModules.blockers[0].message, /node_modules חסר.*install\.js/);
+
+  const files = Object.assign({ 'webpack.config.js': f.expected }, FAKE_MODULES);
+  delete files['node_modules/@ips/mfe-shared-deps/index.js'];
+  const noPkg = validateOnly(repo(files));
+  assert.strictEqual(noPkg.result, 'BLOCKED');
+  assert.match(noPkg.blockers[0].message, /@ips\/mfe-shared-deps לא מותקן/);
+});
+
+test('--validate-only: shared not converted yet → REVIEW, file not touched', () => {
+  const f = fixture('sviva-function');
+  const root = repo(Object.assign({ 'webpack.config.js': f.input }, FAKE_MODULES));
+  const res = validateOnly(root);
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.match(res.manual[0].reason, /עדיין לא הומר ל-buildSharedGen1/);
+  assert.strictEqual(cfg(root), f.input);
+});
+
+test('--validate-only: standalone (no ModuleFederationPlugin) → NOOP', () => {
+  const res = validateOnly(repo({ 'webpack.config.js': 'module.exports = { mode: "production" };\n' }));
+  assert.strictEqual(res.result, 'NOOP');
+});
+
+test('--validate-only --dry-run: same path (validation is read-only)', () => {
+  const f = fixture('sviva-function');
+  const root = repo(Object.assign({ 'webpack.config.js': f.expected }, FAKE_MODULES));
+  const res = validateOnly(root, ['--dry-run']);
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.validation.ok, true);
 });
 
 test('--dry-run writes nothing; --json contract; missing config → BLOCKED', () => {
@@ -188,4 +263,24 @@ test('--dry-run writes nothing; --json contract; missing config → BLOCKED', ()
   out = '';
   main([], { cwd: repo({}) }, { stdout: (s) => { out += s; }, stderr: () => {} });
   assert.match(out, /RESULT: BLOCKED\n$/);
+});
+
+// ---- expected failures → BLOCKED, exit 0 ----
+
+test('overlapping edits → BLOCKED with file:line + paste code, exit 0, file untouched', () => {
+  const { applyEdits } = require('../scripts/webpack-shared');
+  // Two identical edits make the real applyEdits detect an overlap – a script bug no input triggers on purpose.
+  const overlapping = (text, edits) => {
+    const p = edits[0].start;
+    return applyEdits(text, edits.concat([{ start: p, end: p + 1, text: 'X' }, { start: p, end: p + 1, text: 'Y' }]));
+  };
+  const f = fixture('sviva-function');
+  const root = repo({ 'webpack.config.js': f.input });
+  let out = '';
+  const code = main([], { cwd: root, applyEdits: overlapping }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
+  assert.strictEqual(code, 0);
+  assert.match(out, /⛔ webpack\.config\.js:\d+ – webpack-shared יצר שתי עריכות חופפות באותו מקום \(באג בסקריפט\)\. הקובץ לא שונה/);
+  assert.match(out, /\| shared: buildSharedGen1\(\{ pkg, require, role: 'remote' \}\),/);
+  assert.match(out, /RESULT: BLOCKED\n$/);
+  assert.strictEqual(cfg(root), f.input);
 });

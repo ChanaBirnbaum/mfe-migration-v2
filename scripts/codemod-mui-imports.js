@@ -56,7 +56,7 @@ function analyzeModule(module, mapping) {
   const segs = parts.slice(2);
   const conf = mapping.packages[pkg];
   if (!conf) return { kind: 'unknown', pkg: pkg };
-  if (!conf.target) return { kind: 'manual', pkg: pkg, reason: conf.manual };
+  if (!conf.target) return { kind: 'manual', pkg: pkg, reason: conf.manual, packageLevel: true };
   const applyNames = conf.applyRenames !== false;
   const moved = (name) => !!(conf.moved && conf.moved.indexOf(name) !== -1);
   if (segs.length === 0) {
@@ -67,7 +67,9 @@ function analyzeModule(module, mapping) {
     };
   }
   const seg0 = segs[0];
-  if (applyNames && mapping.manual[seg0]) return { kind: 'manual', pkg: pkg, reason: seg0 + ': ' + mapping.manual[seg0] };
+  // גם נתיב עמוק: @material-ui/core/styles/withStyles
+  const manualSeg = applyNames ? segs.find((s) => mapping.manual[s]) : null;
+  if (manualSeg) return { kind: 'manual', pkg: pkg, reason: mapping.manual[manualSeg] };
   const newSeg0 = (applyNames && mapping.renames[seg0]) || seg0;
   const target = [moved(seg0) ? conf.movedTo : conf.target, newSeg0].concat(segs.slice(1)).join('/');
   return {
@@ -77,7 +79,7 @@ function analyzeModule(module, mapping) {
 }
 
 function classifyName(info, name, mapping) {
-  if (info.applyNames && mapping.manual[name]) return { manual: name + ': ' + mapping.manual[name] };
+  if (info.applyNames && mapping.manual[name]) return { manual: mapping.manual[name] };
   return { module: info.moduleFor(name), newName: (info.applyNames && mapping.renames[name]) || name };
 }
 
@@ -153,7 +155,14 @@ function transformFile(tsm, sf, file, mapping) {
     const line = decl.getStartLineNumber();
     const info = analyzeModule(module, mapping);
     if (info.kind === 'unknown') { addManual(line, module + ': חבילה ללא מיפוי ב-mui-mapping.json'); return 1; }
-    if (info.kind === 'manual') { addManual(line, module + ' – ' + info.reason); return 1; }
+    if (info.kind === 'manual') {
+      // חבילה ללא יעד (@material-ui/styles): פריט לכל שם מוכר בשורה שלו, והודעת החבילה לכל השאר
+      const specs = info.packageLevel ? decl.getNamedImports() : [];
+      const known = specs.filter((s) => mapping.manual[s.getName()]);
+      known.forEach((s) => addManual(s.getStartLineNumber(), mapping.manual[s.getName()]));
+      if (!known.length || known.length < specs.length || decl.getDefaultImport() || decl.getNamespaceImport()) addManual(line, info.reason);
+      return 1;
+    }
 
     const typeOnly = decl.isTypeOnly();
     const groups = new Map();
@@ -260,7 +269,7 @@ function transformFile(tsm, sf, file, mapping) {
     const line = call.getStartLineNumber();
     const info = analyzeModule(module, mapping);
     if (info.kind === 'unknown') return addManual(line, module + ': חבילה ללא מיפוי ב-mui-mapping.json');
-    if (info.kind === 'manual') return addManual(line, module + ' – ' + info.reason);
+    if (info.kind === 'manual') return addManual(line, info.reason);
     const parent = call.getParent();
 
     // require('x').Name
@@ -410,20 +419,27 @@ function detectSettings(tsm, sf, text) {
   };
 }
 
-async function formatWithPrettier(root, files, fs, notes) {
+async function formatWithPrettier(root, files, fs, res) {
   let prettier;
   try {
     prettier = require(require.resolve('prettier', { paths: [root] }));
   } catch (_) {
-    if (files.length) notes.push('prettier לא מותקן בשירות – הקבצים לא עוצבו');
+    if (files.length) res.notes.push('prettier לא מותקן בשירות – הקבצים לא עוצבו');
     return;
   }
   for (const full of files) {
-    const config = await prettier.resolveConfig(full);
-    if (!config) continue; // אין קונפיגורציה בריפו – לא מעצבים, כדי לא לייצר diff ענק
-    const text = fs.readFileSync(full, 'utf8');
-    const out = await prettier.format(text, Object.assign({}, config, { filepath: full }));
-    if (out !== text) fs.writeFileSync(full, out, 'utf8');
+    const rel = toPosix(path.relative(root, full));
+    // prettier של השירות: קונפיג שבור, parser חסר או תחביר שהוא לא מכיר – צפוי, לא קריסה
+    try {
+      const config = await prettier.resolveConfig(full);
+      if (!config) continue; // אין קונפיגורציה בריפו – לא מעצבים, כדי לא לייצר diff ענק
+      const text = fs.readFileSync(full, 'utf8');
+      const out = await prettier.format(text, Object.assign({}, config, { filepath: full }));
+      if (out !== text) fs.writeFileSync(full, out, 'utf8');
+    } catch (err) {
+      const why = String((err && err.message) || err).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || 'שגיאה לא ידועה';
+      res.blockers.push({ file: rel, message: rel + ': prettier נכשל – ' + why + '. שינויי הייבוא נכתבו לקובץ, אך הוא לא עוצב. הרץ prettier ידנית על הקובץ ובדוק את השגיאה' });
+    }
   }
 }
 
@@ -484,10 +500,11 @@ async function run(argv, overrides) {
     project.removeSourceFile(sf);
   }
 
-  if (deps.prettier && written.length) await formatWithPrettier(deps.cwd, written, deps.fs, res.notes);
+  if (deps.prettier && written.length) await formatWithPrettier(deps.cwd, written, deps.fs, res);
 
   const reviews = res.changes.filter((c) => c.confidence === 'review');
-  if (res.changes.length === 0 && remaining === 0) res.result = 'NOOP';
+  if (res.blockers.length) res.result = 'BLOCKED';
+  else if (res.changes.length === 0 && remaining === 0) res.result = 'NOOP';
   else if (res.manual.length || reviews.length) res.result = 'REVIEW';
   if (remaining) res.notes.push(remaining + ' ייבואים מ-@material-ui נשארו (ראה manual)');
   return res;
@@ -495,9 +512,9 @@ async function run(argv, overrides) {
 
 function formatText(res) {
   const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '')];
-  if (res.result === 'BLOCKED') {
-    res.blockers.forEach((b) => L.push('⛔ ' + b.message));
-  } else {
+  res.blockers.forEach((b) => L.push('⛔ ' + b.message));
+  // a prettier BLOCKED comes after the files were written – the summary of what changed still matters
+  if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
     const byRule = {};
     res.changes.forEach((c) => { byRule[c.rule] = (byRule[c.rule] || 0) + 1; });
     L.push('✏️ ' + res.filesChanged.length + ' קבצים ' + (res.dryRun ? 'היו משתנים' : 'שונו') +

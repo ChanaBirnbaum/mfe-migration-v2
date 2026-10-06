@@ -75,7 +75,7 @@ test('golden: require() destructuring + property access + createMuiTheme/palette
 test('golden: merges into an existing @mui/material import, makeStyles stays (manual)', async () => {
   const { res, again } = await golden('merge');
   assert.strictEqual(res.result, 'REVIEW');
-  assert.deepStrictEqual(res.manual.map((m) => m.line + ' ' + m.reason.split(':')[0]), ['4 makeStyles']);
+  assert.deepStrictEqual(res.manual.map((m) => m.line + ' ' + m.reason.split(' ')[0]), ['4 makeStyles']);
   // makeStyles still from @material-ui → not NOOP, but no further changes
   assert.strictEqual(again.result, 'REVIEW');
 });
@@ -93,13 +93,37 @@ test('golden: lab split, styles subpath split, pickers review, Hidden + @materia
   const { res } = await golden('lab-styles-mixed');
   assert.strictEqual(res.result, 'REVIEW');
   const manual = res.manual.map((m) => m.reason);
-  assert.ok(manual.some((r) => /^makeStyles:/.test(r)));
+  assert.ok(manual.some((r) => /^makeStyles /.test(r)));
   assert.ok(manual.some((r) => /Hidden/.test(r)));
   assert.ok(manual.some((r) => /@material-ui\/styles/.test(r)));
   const reviews = res.changes.filter((c) => c.confidence === 'review').map((c) => c.detail);
   assert.ok(reviews.some((d) => /→ @mui\/x-date-pickers$/.test(d)));
   assert.ok(reviews.some((d) => /→ @mui\/lab$/.test(d)));
   assert.ok(!reviews.some((d) => /→ @mui\/material$/.test(d)), 'moved lab components are auto');
+});
+
+test('golden: withStyles / createStyles / StylesProvider stay, each manual with file + line + exact message', async () => {
+  const { res, again } = await golden('jss-apis');
+  const file = 'src/jss-apis.jsx';
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.strictEqual(again.result, 'REVIEW');
+  const WITH_STYLES = 'withStyles אינו נתמך ב-MUI v7. נדרשת המרה ידנית ל-styled() או sx';
+  assert.deepStrictEqual(res.manual.map((m) => [m.file, m.line, m.reason.split(' ')[0]]), [
+    [file, 2, 'withStyles'], [file, 2, 'createStyles'], [file, 2, 'StylesProvider'],
+    // lines are in the rewritten file: `import { Button } from '@mui/material'` was added at line 3
+    [file, 4, 'withStyles'], // deep path @material-ui/core/styles/withStyles
+    [file, 5, 'withStyles'], // @material-ui/styles – per name, not the package message
+  ]);
+  res.manual.filter((m) => m.reason.startsWith('withStyles')).forEach((m) => assert.strictEqual(m.reason, WITH_STYLES));
+  assert.ok(!res.manual.some((m) => /מטופל ב-codemod-makestyles/.test(m.reason)), 'no message may claim makestyles handles these');
+});
+
+test('a file whose only @material-ui import is withStyles → REVIEW, not OK/NOOP', async () => {
+  const root = repo({ 'src/w.jsx': "import { withStyles } from '@material-ui/core';\nexport default withStyles({})(() => null);\n" });
+  const res = await run([], { cwd: root });
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.deepStrictEqual(res.manual.map((m) => [m.file, m.line]), [['src/w.jsx', 1]]);
+  assert.deepStrictEqual(res.changes, []);
 });
 
 // ---- behaviour ----
@@ -166,4 +190,24 @@ test('--json contract', async () => {
   const res = JSON.parse(out);
   assert.deepStrictEqual(Object.keys(res).slice(0, 6), ['script', 'result', 'changes', 'manual', 'blockers', 'notes']);
   assert.ok(res.manual.every((m) => m.file && m.line && m.reason));
+});
+
+// ---- expected failures → BLOCKED, exit 0 ----
+
+test('prettier.format throws → BLOCKED with the file and the prettier error, exit 0; import changes kept', async () => {
+  const c = caseFiles('named-root');
+  const root = repo({
+    [c.file]: c.input,
+    'node_modules/prettier/index.js': [
+      'exports.resolveConfig = async () => ({ singleQuote: true });',
+      "exports.format = async () => { throw new Error('SyntaxError: Unexpected token (3:5)\\n  1 | import x'); };",
+    ].join('\n'),
+  });
+  let out = '';
+  const code = await main([], { cwd: root }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
+  assert.strictEqual(code, 0);
+  assert.match(out, /⛔ src\/named-root\.jsx: prettier נכשל – SyntaxError: Unexpected token \(3:5\)\. שינויי הייבוא נכתבו לקובץ, אך הוא לא עוצב/);
+  assert.match(out, /✏️ 1 קבצים שונו/);
+  assert.match(out, /RESULT: BLOCKED\n$/);
+  assert.strictEqual(readIn(root, c.file), c.expected); // the codemod output itself was written
 });

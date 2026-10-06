@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { run, main, minVersion } = require('../scripts/scan');
+const { run, main, minVersion, formatText } = require('../scripts/scan');
 
 // ---------------------------------------------------------------------------
 // Fixture repo
@@ -227,8 +227,8 @@ const files = (list) => Array.from(new Set(list.map((x) => x.file))).sort();
 // ---------------------------------------------------------------------------
 // Inventory content
 
-test('result OK and basic fields', () => {
-  assert.strictEqual(RES.result, 'OK');
+test('basic fields (fixture has deny-list packages → BLOCKED, inventory still complete)', () => {
+  assert.strictEqual(RES.result, 'BLOCKED');
   const inv = RES.inventory;
   assert.deepStrictEqual(inv.service, { name: 'hasava-mfe', version: '0.1.1' });
   assert.strictEqual(inv.filesScanned, 10); // node_modules/build/dist and .css skipped
@@ -237,13 +237,18 @@ test('result OK and basic fields', () => {
   assert.deepStrictEqual(inv.scripts, { build: 'webpack --mode production  --env sviva=prod' });
 });
 
-test('deny-list blockers: only incompatible versions, do not change RESULT', () => {
+test('deny-list: only incompatible versions, copied to the top-level blockers[] → BLOCKED', () => {
   const b = RES.inventory.blockers;
   assert.deepStrictEqual(b.map((x) => x.package).sort(), ['enzyme', 'react-beautiful-dnd']);
   const dnd = b.find((x) => x.package === 'react-beautiful-dnd');
   assert.strictEqual(dnd.fixedIn, '13.1.1');
   assert.strictEqual(dnd.checkedVersion, '12.2.0');
-  assert.deepStrictEqual(RES.blockers, []);
+  assert.deepStrictEqual(RES.blockers.map((x) => [x.package, x.range, x.suggestion]), [
+    ['react-beautiful-dnd', '^12.2.0', 'שדרוג ל-13.1.1 או החלפה ב-@hello-pangea/dnd'],
+    ['enzyme', '^3.11.0', 'החלפה ב-@testing-library/react'],
+  ]);
+  assert.match(RES.blockers[1].message, /^חבילה לא תואמת React 18: enzyme \^3\.11\.0 \(devDependencies\) – /);
+  assert.strictEqual(RES.result, 'BLOCKED'); // also has react18Only – BLOCKED wins over REVIEW
 });
 
 test('muiFiles: @material-ui imports with names, commented imports ignored', () => {
@@ -292,6 +297,42 @@ test('makeStyles components: slot vs className consumers', () => {
   ]);
   const dy = ms.find((m) => m.file === 'src/components/Dynamic.jsx');
   assert.deepStrictEqual(dy.components.map((c) => [c.key, c.component]), [['box', 'Paper']]);
+});
+
+test('jssApis: withStyles / createStyles / StylesProvider with file, line, module; commented ignored', () => {
+  assert.deepStrictEqual(RES.inventory.jssApis, []);
+  const root = makeRepo({
+    'src/components/Legacy.jsx': [
+      "import { withStyles, createStyles, makeStyles, StylesProvider } from '@material-ui/core/styles';",
+      "import * as Styles from '@mui/styles';",
+      "import Button from '@material-ui/core/Button';",
+      '// const W = withStyles({ root: {} })(Button);',
+      'const useStyles = makeStyles(() => createStyles({ root: { margin: 0 } }));',
+      'const Styled = withStyles({ root: { padding: 0 } })(Button);',
+      'const Other = Styles.withStyles({})(Button);',
+      'export const L = () => <StylesProvider injectFirst><Styled /><Other /></StylesProvider>;',
+    ].join('\n'),
+    'src/components/Unused.jsx': "import { createStyles } from '@material-ui/core';\nexport const u = 1;\n",
+  });
+  const res = run(['--dry-run'], { cwd: root });
+  const core = '@material-ui/core/styles';
+  assert.deepStrictEqual(res.inventory.jssApis.map((u) => [u.file.replace('src/components/', ''), u.line, u.api, u.kind, u.module, u.insideMakeStyles]), [
+    ['Legacy.jsx', 5, 'createStyles', 'call', core, true],
+    ['Legacy.jsx', 6, 'withStyles', 'call', core, false],
+    ['Legacy.jsx', 7, 'withStyles', 'call', '@mui/styles', false],
+    ['Legacy.jsx', 8, 'StylesProvider', 'jsx', core, false],
+    ['Unused.jsx', 1, 'createStyles', 'import', '@material-ui/core', false],
+  ]);
+  // only @material-ui imports outside makeStyles break the build
+  assert.match(formatText(res), /🧱 JSS ללא המרה: withStyles ×1, StylesProvider ×1, createStyles ×1 ב-2 קבצים \(\+2 /);
+});
+
+test('routerImports: every react-router(-dom) import with file and line', () => {
+  assert.deepStrictEqual(RES.inventory.routerImports.map((r) => [r.file, r.line, r.module, r.names]), [
+    ['src/App.jsx', 2, 'react-router-dom', ['BrowserRouter', 'Switch', 'Route']],
+    ['src/Home.jsx', 2, 'react-router-dom', ['useHistory']],
+    ['src/routes.js', 1, 'react-router-dom', ['createBrowserRouter']],
+  ]);
 });
 
 test('asyncEffects: only the live one', () => {
@@ -404,7 +445,7 @@ test('writes only the output file; second run leaves it untouched', () => {
   const root = makeRepo();
   const before = listTree(root);
   const r1 = run([], { cwd: root });
-  assert.strictEqual(r1.result, 'OK');
+  assert.strictEqual(r1.result, 'BLOCKED'); // deny-list – the inventory is written anyway
   assert.deepStrictEqual(r1.changes, [{ file: '.migration/inventory.json', rule: 'SCAN.INVENTORY', confidence: 'auto' }]);
   const after = listTree(root);
   const added = after.filter((x) => before.indexOf(x) === -1);
@@ -413,7 +454,7 @@ test('writes only the output file; second run leaves it untouched', () => {
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, '.migration/inventory.json'), 'utf8')), r1.inventory);
 
   const r2 = run([], { cwd: root });
-  assert.strictEqual(r2.result, 'OK');
+  assert.strictEqual(r2.result, 'BLOCKED');
   assert.deepStrictEqual(r2.changes, []);
   assert.deepStrictEqual(listTree(root), after);
 });
@@ -442,7 +483,69 @@ test('text output: Hebrew summary, RESULT last', () => {
   assert.match(out, /10 קבצים נסרקו/);
   assert.match(out, /3 קבצים עם @material-ui\/core/);
   assert.match(out, /3 מופעי makeStyles: 1 static \| 1 theme \| 1 props/);
-  assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: OK');
+  // a deny-list BLOCKED still prints the full inventory summary, not "scan failed"
+  assert.doesNotMatch(out, /הסריקה נכשלה/);
+  assert.match(out, /⛔ 2 חבילות לא תואמות React 18:/);
+  assert.match(out, /⛔ 2 חסמים – /);
+  assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: BLOCKED');
+});
+
+// ---------------------------------------------------------------------------
+// RESULT: BLOCKED (deny-list) > REVIEW (react18Only / routerPost602 / uncertain) > OK
+
+function mini(pkg, src) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scan-result-'));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(Object.assign({ name: 'mini' }, pkg)));
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.writeFileSync(path.join(root, 'src', 'App.jsx'), src || "import React from 'react';\nexport default () => <div />;\n");
+  return run(['--dry-run'], { cwd: root });
+}
+const REACT17 = { dependencies: { react: '^17.0.2' } };
+
+test('result: clean repo → OK, no blockers, no manual', () => {
+  const res = mini(REACT17);
+  assert.strictEqual(res.result, 'OK');
+  assert.deepStrictEqual(res.blockers, []);
+  assert.deepStrictEqual(res.manual, []);
+});
+
+test('result: deny-list package only → BLOCKED', () => {
+  const res = mini({ dependencies: { react: '^17.0.2', 'react-hot-loader': '^4.13.0' } });
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.deepStrictEqual(res.blockers.map((b) => b.package), ['react-hot-loader']);
+});
+
+test('result: compatible version of a deny-list package → OK', () => {
+  assert.strictEqual(mini({ dependencies: { react: '^17.0.2', 'react-beautiful-dnd': '^13.1.1' } }).result, 'OK');
+});
+
+test('result: react18Only only → REVIEW, not BLOCKED', () => {
+  const res = mini(REACT17, "import { useId } from 'react';\nexport default () => <div id={useId()} />;\n");
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.deepStrictEqual(res.blockers, []);
+  assert.deepStrictEqual(res.manual.map((m) => [m.file, m.line]), [['src/App.jsx', 2]]); // the useId() call, not the import
+});
+
+test('result: routerPost602 only → REVIEW', () => {
+  const res = mini({ dependencies: { react: '^17.0.2', 'react-router-dom': '^6.0.2' } },
+    "import { useOutletContext } from 'react-router-dom';\nexport default () => useOutletContext();\n");
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.deepStrictEqual(res.blockers, []);
+});
+
+test('result: deny-list match with unknown version (not installed, "latest") → REVIEW + manual, not BLOCKED', () => {
+  const res = mini({ dependencies: { react: '^17.0.2', 'react-beautiful-dnd': 'latest' } });
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.deepStrictEqual(res.blockers, []);
+  assert.strictEqual(res.manual.length, 1);
+  assert.strictEqual(res.manual[0].file, 'package.json');
+  assert.match(res.manual[0].reason, /react-beautiful-dnd latest.*הגרסה לא ודאית/);
+});
+
+test('result: deny-list + react18Only → BLOCKED wins', () => {
+  const res = mini({ dependencies: { react: '^17.0.2', enzyme: '^3.11.0' } }, "import { useId } from 'react';\nexport default () => <div id={useId()} />;\n");
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.strictEqual(res.manual.length, 1); // the react18Only warning is still reported
 });
 
 test('--json output follows the contract', () => {

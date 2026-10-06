@@ -15,6 +15,10 @@ const BOOTSTRAP_RE = /^bootstrap\.(js|jsx|ts|tsx)$/;
 const FC_NAMES = ['FC', 'FunctionComponent'];
 
 class CodemodError extends Error {}
+// a bug in this codemod (two edits on the same range) – expected enough to report as BLOCKED, not crash
+class EditConflict extends Error {
+  constructor(pos) { super('overlapping edits at ' + pos); this.pos = pos; }
+}
 
 function parseArgs(argv) {
   const opts = { dryRun: false, json: false, errors: [] };
@@ -65,7 +69,7 @@ function resolveModuleFile(fs, base) {
 function applyEdits(text, edits) {
   const sorted = edits.slice().sort((a, b) => b.start - a.start || b.end - a.end);
   for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i].end > sorted[i - 1].start) throw new Error('overlapping edits at ' + sorted[i].start);
+    if (sorted[i].end > sorted[i - 1].start) throw new EditConflict(sorted[i - 1].start);
   }
   return sorted.reduce((t, e) => t.slice(0, e.start) + e.text + t.slice(e.end), text);
 }
@@ -471,8 +475,13 @@ function transformFile(tsm, sf, file, isBootstrap) {
 
 // ---------------------------------------------------------------------------
 
+function conflictMessage(rel, text, err) {
+  const line = text.slice(0, err.pos).split('\n').length;
+  return rel + ':' + line + ' – ' + SCRIPT + ' יצר שתי עריכות חופפות באותו מקום (באג בקודמוד). הקובץ לא שונה – יש להמיר אותו ידנית או לדווח על הבאג';
+}
+
 function run(argv, overrides) {
-  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd() }, overrides || {});
+  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd(), applyEdits: applyEdits }, overrides || {});
   const opts = parseArgs(argv || []);
   const res = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, filesChanged: [], bootstrapFiles: [] };
   const blocked = (m) => { res.result = 'BLOCKED'; res.blockers.push({ message: m }); return res; };
@@ -507,10 +516,18 @@ function run(argv, overrides) {
     const sf = project.createSourceFile('/' + rel, text, { overwrite: true });
     const r = transformFile(tsm, sf, rel, bootstrap.has(full));
     project.removeSourceFile(sf);
-    res.changes.push.apply(res.changes, r.changes);
     res.manual.push.apply(res.manual, r.manual);
-    if (!r.edits.length) continue;
-    const out = applyEdits(text, r.edits);
+    let out = text;
+    if (r.edits.length) {
+      try {
+        out = deps.applyEdits(text, r.edits);
+      } catch (err) {
+        if (!(err instanceof EditConflict)) throw err;
+        res.blockers.push({ file: rel, message: conflictMessage(rel, text, err) });
+        continue; // הקובץ לא נכתב, והשינויים שלו לא מדווחים
+      }
+    }
+    res.changes.push.apply(res.changes, r.changes);
     if (out === text) continue;
     res.filesChanged.push(rel);
     if (!opts.dryRun) {
@@ -519,15 +536,17 @@ function run(argv, overrides) {
   }
 
   const reviews = res.changes.filter((c) => c.confidence === 'review');
-  if (res.changes.length === 0 && res.manual.length === 0) res.result = 'NOOP';
+  if (res.blockers.length) res.result = 'BLOCKED';
+  else if (res.changes.length === 0 && res.manual.length === 0) res.result = 'NOOP';
   else if (res.manual.length || reviews.length) res.result = 'REVIEW';
   return res;
 }
 
 function formatText(res) {
   const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '')];
-  if (res.result === 'BLOCKED') res.blockers.forEach((b) => L.push('⛔ ' + b.message));
-  else {
+  res.blockers.forEach((b) => L.push('⛔ ' + b.message));
+  // BLOCKED of a single file still has a summary of the rest; a precondition BLOCKED (no src/ …) has nothing else
+  if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
     L.push('🚀 bootstrap: ' + (res.bootstrapFiles.join(', ') || '-'));
     const byRule = {};
     res.changes.forEach((c) => { byRule[c.rule] = (byRule[c.rule] || 0) + 1; });

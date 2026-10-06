@@ -1,0 +1,15 @@
+{
+  "name": "mfe-migration-v2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code skill: migrate MFE services from React 17 + MUI v4 to React 18 + MUI v7",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  }
+}

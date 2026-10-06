@@ -1,0 +1,14 @@
+{
+  "name": "mini",
+  "version": "2.0.0",
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.11.0",
+    "@ips/mfe-shared-deps": "^1.4.0",
+    "@mui/material": "^7.3.11",
+    "@mui/x-date-pickers": "^9.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1"
+  }
+}

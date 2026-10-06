@@ -1,0 +1,4 @@
+src/Typed.tsx(7,9): error TS2322: Type 'string' is not assignable to type 'number'.
+src/Typed.tsx(8,22): error TS2304: Cannot find name 'missingName'.
+src/Typed.tsx(11,27): error TS2345: Argument of type '{ title: string; }' is not assignable to parameter of type 'Props'.
+  Property 'count' is missing in type '{ title: string; }' but required in type 'Props'.

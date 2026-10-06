@@ -1,0 +1,10 @@
+{
+  "messagePrefix": "migration-v2",
+  "steps": {
+    "mechanical": "package.json, MUI imports, React 18",
+    "infra": "styles, useSharedState, webpack federation",
+    "build-fixes": "build error fixes"
+  },
+  "protectedBranches": ["digital_V2", "main", "master"],
+  "excludePaths": [".migration", "MIGRATION-V2-REPORT.md"]
+}

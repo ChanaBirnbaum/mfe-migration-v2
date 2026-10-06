@@ -1,0 +1,216 @@
+{
+  "_comment": [
+    "Per MUI v7 component: how each v4 `classes` key maps to v7 styling.",
+    "slots: classes key -> slotProps key (slot accepts sx – its default element is a styled() component).",
+    "hooks: classes key -> { host, selector }. host = where the sx selector must live: 'root' (sx on the component) or a slot name (slotProps.<host>.sx).",
+    "  The host matters for portaled content: e.g. Autocomplete options render inside the Popper portal, outside the root DOM,",
+    "  so a selector on the root sx would never match – it must go on the listbox slot.",
+    "  selector '&.X' = class on the host element itself; '& .X' = class on a descendant. Global states use '.Mui-<state>'.",
+    "root: true = classes.root is styled with sx on the component itself.",
+    "inferred: host derived from the component's DOM structure, not from a declaration – verify manually.",
+    "manual: key exists in v7 classes but is not applied by v7 – cannot be converted.",
+    "Verified against @mui/material@7.3.11: <Comp>Classes.d.ts (keys), <Comp>Slots in <Comp>.d.ts (slots), styled() slot definitions",
+    "and useUtilityClasses in <Comp>.js (which element each class lands on). Global states from @mui/utils globalStateClasses."
+  ],
+  "_verifiedAgainst": "@mui/material@7.3.11",
+  "components": {
+    "Autocomplete": {
+      "prefix": "MuiAutocomplete",
+      "root": true,
+      "slots": {
+        "paper": "paper",
+        "popper": "popper",
+        "listbox": "listbox",
+        "clearIndicator": "clearIndicator",
+        "popupIndicator": "popupIndicator"
+      },
+      "hooks": {
+        "expanded": { "host": "root", "selector": "&.Mui-expanded" },
+        "focused": { "host": "root", "selector": "&.Mui-focused" },
+        "fullWidth": { "host": "root", "selector": "&.MuiAutocomplete-fullWidth" },
+        "hasClearIcon": { "host": "root", "selector": "&.MuiAutocomplete-hasClearIcon" },
+        "hasPopupIcon": { "host": "root", "selector": "&.MuiAutocomplete-hasPopupIcon" },
+        "inputRoot": { "host": "root", "selector": "& .MuiAutocomplete-inputRoot" },
+        "input": { "host": "root", "selector": "& .MuiAutocomplete-input" },
+        "inputFocused": { "host": "root", "selector": "& .MuiAutocomplete-inputFocused" },
+        "tag": { "host": "root", "selector": "& .MuiAutocomplete-tag" },
+        "tagSizeSmall": { "host": "root", "selector": "& .MuiAutocomplete-tagSizeSmall" },
+        "tagSizeMedium": { "host": "root", "selector": "& .MuiAutocomplete-tagSizeMedium" },
+        "endAdornment": { "host": "root", "selector": "& .MuiAutocomplete-endAdornment" },
+        "popupIndicatorOpen": { "host": "popupIndicator", "selector": "&.MuiAutocomplete-popupIndicatorOpen" },
+        "popperDisablePortal": { "host": "popper", "selector": "&.MuiAutocomplete-popperDisablePortal" },
+        "option": { "host": "listbox", "selector": "& .MuiAutocomplete-option", "inferred": true },
+        "groupLabel": { "host": "listbox", "selector": "& .MuiAutocomplete-groupLabel", "inferred": true },
+        "groupUl": { "host": "listbox", "selector": "& .MuiAutocomplete-groupUl", "inferred": true },
+        "loading": { "host": "paper", "selector": "& .MuiAutocomplete-loading", "inferred": true },
+        "noOptions": { "host": "paper", "selector": "& .MuiAutocomplete-noOptions", "inferred": true },
+        "focusVisible": { "manual": "focusVisible מוגדר ב-autocompleteClasses אך אינו מוחל ב-v7" }
+      }
+    },
+    "Dialog": {
+      "prefix": "MuiDialog",
+      "root": true,
+      "slots": { "paper": "paper", "container": "container", "backdrop": "backdrop" },
+      "hooks": {
+        "scrollPaper": { "host": "container", "selector": "&.MuiDialog-scrollPaper" },
+        "scrollBody": { "host": "container", "selector": "&.MuiDialog-scrollBody" },
+        "paperScrollPaper": { "host": "paper", "selector": "&.MuiDialog-paperScrollPaper" },
+        "paperScrollBody": { "host": "paper", "selector": "&.MuiDialog-paperScrollBody" },
+        "paperWidthFalse": { "host": "paper", "selector": "&.MuiDialog-paperWidthFalse" },
+        "paperWidthXs": { "host": "paper", "selector": "&.MuiDialog-paperWidthXs" },
+        "paperWidthSm": { "host": "paper", "selector": "&.MuiDialog-paperWidthSm" },
+        "paperWidthMd": { "host": "paper", "selector": "&.MuiDialog-paperWidthMd" },
+        "paperWidthLg": { "host": "paper", "selector": "&.MuiDialog-paperWidthLg" },
+        "paperWidthXl": { "host": "paper", "selector": "&.MuiDialog-paperWidthXl" },
+        "paperFullWidth": { "host": "paper", "selector": "&.MuiDialog-paperFullWidth" },
+        "paperFullScreen": { "host": "paper", "selector": "&.MuiDialog-paperFullScreen" }
+      }
+    },
+    "Menu": {
+      "prefix": "MuiMenu",
+      "root": true,
+      "slots": { "paper": "paper", "list": "list" },
+      "hooks": {}
+    },
+    "Popover": {
+      "prefix": "MuiPopover",
+      "root": true,
+      "slots": { "paper": "paper" },
+      "hooks": {}
+    },
+    "Popper": {
+      "prefix": "MuiPopper",
+      "classesProp": false,
+      "_note": "Popper ב-v7 אינו מקבל classes ואין לו slot בשם paper. classes על Popper (במיוחד paper) הוא טעות – manual.",
+      "root": false,
+      "slots": {},
+      "hooks": {}
+    },
+    "Tooltip": {
+      "prefix": "MuiTooltip",
+      "root": false,
+      "_note": "ל-Tooltip אין אלמנט root משלו – ה-popper וה-tooltip מרונדרים ב-portal.",
+      "slots": { "popper": "popper", "tooltip": "tooltip", "arrow": "arrow" },
+      "hooks": {
+        "popperInteractive": { "host": "popper", "selector": "&.MuiTooltip-popperInteractive" },
+        "popperArrow": { "host": "popper", "selector": "&.MuiTooltip-popperArrow" },
+        "tooltipArrow": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipArrow" },
+        "touch": { "host": "tooltip", "selector": "&.MuiTooltip-touch" },
+        "tooltipPlacementLeft": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementLeft" },
+        "tooltipPlacementRight": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementRight" },
+        "tooltipPlacementTop": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementTop" },
+        "tooltipPlacementBottom": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementBottom" },
+        "popperClose": { "manual": "popperClose מוגדר ב-tooltipClasses אך אינו מוחל ב-v7" }
+      }
+    },
+    "Drawer": {
+      "prefix": "MuiDrawer",
+      "root": true,
+      "slots": { "paper": "paper", "docked": "docked" },
+      "hooks": {
+        "modal": { "host": "root", "selector": "&.MuiDrawer-modal" },
+        "anchorLeft": { "host": "root", "selector": "&.MuiDrawer-anchorLeft" },
+        "anchorRight": { "host": "root", "selector": "&.MuiDrawer-anchorRight" },
+        "anchorTop": { "host": "root", "selector": "&.MuiDrawer-anchorTop" },
+        "anchorBottom": { "host": "root", "selector": "&.MuiDrawer-anchorBottom" },
+        "paperAnchorLeft": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorLeft" },
+        "paperAnchorRight": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorRight" },
+        "paperAnchorTop": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorTop" },
+        "paperAnchorBottom": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorBottom" },
+        "paperAnchorDockedLeft": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorDockedLeft" },
+        "paperAnchorDockedRight": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorDockedRight" },
+        "paperAnchorDockedTop": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorDockedTop" },
+        "paperAnchorDockedBottom": { "host": "paper", "selector": "&.MuiDrawer-paperAnchorDockedBottom" }
+      }
+    },
+    "TextField": {
+      "prefix": "MuiTextField",
+      "root": true,
+      "_note": "classes של TextField מכיל רק root. slotProps קיימים (input, inputLabel, htmlInput, formHelperText, select) אך אין להם מפתח classes מקביל.",
+      "slots": {},
+      "hooks": {}
+    },
+    "Select": {
+      "prefix": "MuiSelect",
+      "root": true,
+      "_note": "המחלקות מוחלות ב-SelectInput על אלמנטים פנימיים של ה-root. ל-Select אין slotProps – ה-Menu נשלט דרך MenuProps.",
+      "slots": {},
+      "hooks": {
+        "select": { "host": "root", "selector": "& .MuiSelect-select" },
+        "multiple": { "host": "root", "selector": "& .MuiSelect-multiple" },
+        "filled": { "host": "root", "selector": "& .MuiSelect-filled" },
+        "outlined": { "host": "root", "selector": "& .MuiSelect-outlined" },
+        "standard": { "host": "root", "selector": "& .MuiSelect-standard" },
+        "icon": { "host": "root", "selector": "& .MuiSelect-icon" },
+        "iconOpen": { "host": "root", "selector": "& .MuiSelect-iconOpen" },
+        "iconFilled": { "host": "root", "selector": "& .MuiSelect-iconFilled" },
+        "iconOutlined": { "host": "root", "selector": "& .MuiSelect-iconOutlined" },
+        "iconStandard": { "host": "root", "selector": "& .MuiSelect-iconStandard" },
+        "nativeInput": { "host": "root", "selector": "& .MuiSelect-nativeInput" },
+        "disabled": { "host": "root", "selector": "& .MuiSelect-select.Mui-disabled", "inferred": true },
+        "error": { "host": "root", "selector": "& .MuiSelect-select.Mui-error", "inferred": true },
+        "focused": { "manual": "focused מוגדר ב-selectClasses אך אינו מוחל ב-v7" }
+      }
+    },
+    "Table": {
+      "prefix": "MuiTable",
+      "root": true,
+      "slots": {},
+      "hooks": {
+        "stickyHeader": { "host": "root", "selector": "&.MuiTable-stickyHeader" }
+      }
+    },
+    "Card": {
+      "prefix": "MuiCard",
+      "root": true,
+      "slots": {},
+      "hooks": {}
+    },
+    "Accordion": {
+      "prefix": "MuiAccordion",
+      "root": true,
+      "slots": { "heading": "heading", "region": "region" },
+      "hooks": {
+        "rounded": { "host": "root", "selector": "&.MuiAccordion-rounded" },
+        "gutters": { "host": "root", "selector": "&.MuiAccordion-gutters" },
+        "expanded": { "host": "root", "selector": "&.Mui-expanded" },
+        "disabled": { "host": "root", "selector": "&.Mui-disabled" }
+      }
+    },
+    "Tabs": {
+      "prefix": "MuiTabs",
+      "root": true,
+      "slots": {
+        "scroller": "scroller",
+        "list": "list",
+        "flexContainer": "list",
+        "indicator": "indicator",
+        "scrollButtons": "scrollButtons"
+      },
+      "hooks": {
+        "vertical": { "host": "root", "selector": "&.MuiTabs-vertical" },
+        "flexContainerVertical": { "host": "list", "selector": "&.MuiTabs-flexContainerVertical" },
+        "centered": { "host": "list", "selector": "&.MuiTabs-centered" },
+        "fixed": { "host": "scroller", "selector": "&.MuiTabs-fixed" },
+        "hideScrollbar": { "host": "scroller", "selector": "&.MuiTabs-hideScrollbar" },
+        "scrollableX": { "host": "scroller", "selector": "&.MuiTabs-scrollableX" },
+        "scrollableY": { "host": "scroller", "selector": "&.MuiTabs-scrollableY" },
+        "scrollButtonsHideMobile": { "host": "scrollButtons", "selector": "&.MuiTabs-scrollButtonsHideMobile" }
+      }
+    },
+    "Snackbar": {
+      "prefix": "MuiSnackbar",
+      "root": true,
+      "_note": "ל-Snackbar יש slot בשם content (SnackbarContent) אך אין מפתח classes מקביל.",
+      "slots": {},
+      "hooks": {
+        "anchorOriginTopCenter": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginTopCenter" },
+        "anchorOriginBottomCenter": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginBottomCenter" },
+        "anchorOriginTopRight": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginTopRight" },
+        "anchorOriginBottomRight": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginBottomRight" },
+        "anchorOriginTopLeft": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginTopLeft" },
+        "anchorOriginBottomLeft": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginBottomLeft" }
+      }
+    }
+  }
+}

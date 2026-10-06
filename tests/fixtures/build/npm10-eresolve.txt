@@ -1,0 +1,21 @@
+npm error code ERESOLVE
+npm error ERESOLVE unable to resolve dependency tree
+npm error
+npm error While resolving: buildlab@1.0.0
+npm error Found: @babel/core@8.0.6
+npm error node_modules/@babel/core
+npm error   @babel/core@"8" from the root project
+npm error
+npm error Could not resolve dependency:
+npm error peer @babel/core@"^7.12.0" from babel-loader@9.2.1
+npm error node_modules/babel-loader
+npm error   babel-loader@"9" from the root project
+npm error
+npm error Fix the upstream dependency conflict, or retry
+npm error this command with --force or --legacy-peer-deps
+npm error to accept an incorrect (and potentially broken) dependency resolution.
+npm error
+npm error
+npm error For a full report see:
+npm error C:\Users\user\AppData\Local\npm-cache\_logs\2026-10-06T04_50_23_010Z-eresolve-report.txt
+npm error A complete log of this run can be found in: C:\Users\user\AppData\Local\npm-cache\_logs\2026-10-06T04_50_23_010Z-debug-0.log

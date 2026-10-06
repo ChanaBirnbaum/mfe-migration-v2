@@ -1,0 +1,39 @@
+{
+  "_comment": "Single source of truth for package versions. Edit here – scripts never hard-code versions.",
+  "packageVersion": "2.0.0",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1",
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.11.0",
+    "@mui/material": "^7.3.11",
+    "@mui/x-date-pickers": "^9.3.0"
+  },
+  "conditionalDependencies": {
+    "@mui/icons-material": "^7.3.11"
+  },
+  "requiredDependencies": {
+    "_comment": "null = resolve the latest published version from the registry at run time (written as ^x.y.z)",
+    "@ips/mfe-shared-deps": null
+  },
+  "types": {
+    "@types/react": "^18",
+    "@types/react-dom": "^18"
+  },
+  "remove": [
+    "@material-ui/core",
+    "@material-ui/icons",
+    "@material-ui/lab",
+    "@material-ui/pickers",
+    "@material-ui/styles"
+  ],
+  "mirrorInDevDependencies": ["react", "react-dom"],
+  "buildTools": [
+    "babel-loader", "css-loader", "style-loader", "sass-loader", "less-loader", "file-loader", "url-loader",
+    "react-scripts", "webpack", "webpack-cli", "webpack-dev-server", "html-webpack-plugin",
+    "mini-css-extract-plugin", "copy-webpack-plugin", "dotenv-webpack", "ts-loader", "typescript",
+    "@babel/core", "@babel/preset-env", "@babel/preset-react", "@babel/preset-typescript",
+    "eslint", "prettier"
+  ]
+}

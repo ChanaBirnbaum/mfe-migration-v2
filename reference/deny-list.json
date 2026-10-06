@@ -1,0 +1,68 @@
+{
+  "_comment": "Packages known to be incompatible with React 18. range: '*' (every version) or '<x.y.z'. fixedIn: first compatible version, null if none exists.",
+  "packages": [
+    {
+      "name": "react-beautiful-dnd",
+      "range": "<13.1.1",
+      "fixedIn": "13.1.1",
+      "alternative": "@hello-pangea/dnd",
+      "reason": "React 18 נתמך רק מ-13.1.1. הספרייה הוצאה משימוש – עדיף @hello-pangea/dnd"
+    },
+    {
+      "name": "enzyme",
+      "range": "*",
+      "fixedIn": null,
+      "alternative": "@testing-library/react",
+      "reason": "אין adapter רשמי ל-React 18"
+    },
+    {
+      "name": "enzyme-adapter-react-16",
+      "range": "*",
+      "fixedIn": null,
+      "alternative": "@testing-library/react",
+      "reason": "adapter ל-React 16 בלבד"
+    },
+    {
+      "name": "@wojtekmaj/enzyme-adapter-react-17",
+      "range": "*",
+      "fixedIn": null,
+      "alternative": "@testing-library/react",
+      "reason": "adapter ל-React 17 בלבד"
+    },
+    {
+      "name": "react-test-renderer",
+      "range": "<18.0.0",
+      "fixedIn": "18.3.1",
+      "alternative": null,
+      "reason": "הגרסה חייבת להתאים לגרסת React"
+    },
+    {
+      "name": "@testing-library/react",
+      "range": "<13.0.0",
+      "fixedIn": "13.0.0",
+      "alternative": null,
+      "reason": "React 18 נתמך מגרסה 13"
+    },
+    {
+      "name": "@testing-library/react-hooks",
+      "range": "*",
+      "fixedIn": null,
+      "alternative": "@testing-library/react (renderHook)",
+      "reason": "לא תומך ב-React 18; renderHook עבר ל-@testing-library/react 13.1+"
+    },
+    {
+      "name": "react-hot-loader",
+      "range": "*",
+      "fixedIn": null,
+      "alternative": "react-refresh",
+      "reason": "לא נתמך ב-React 18"
+    },
+    {
+      "name": "react-sortable-hoc",
+      "range": "*",
+      "fixedIn": null,
+      "alternative": "@dnd-kit/sortable",
+      "reason": "peerDependencies עד React 17, ותלוי ב-findDOMNode. הפרויקט ארכיוני"
+    }
+  ]
+}

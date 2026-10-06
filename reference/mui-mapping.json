@@ -1,0 +1,49 @@
+{
+  "_comment": "Material-UI v4 -> MUI v7 import mapping. Data only – codemod-mui-imports.js reads it.",
+  "packages": {
+    "@material-ui/core": { "target": "@mui/material" },
+    "@material-ui/icons": { "target": "@mui/icons-material", "applyRenames": false },
+    "@material-ui/lab": {
+      "target": "@mui/lab",
+      "review": "@mui/lab אינו מוצהר ב-package.json ורכיבי lab השתנו בין גרסאות – יש לוודא ידנית",
+      "movedTo": "@mui/material",
+      "moved": [
+        "Alert", "AlertTitle", "Autocomplete", "AvatarGroup", "Pagination", "PaginationItem", "Rating",
+        "Skeleton", "SpeedDial", "SpeedDialAction", "SpeedDialIcon", "ToggleButton", "ToggleButtonGroup",
+        "usePagination", "useAutocomplete"
+      ]
+    },
+    "@material-ui/pickers": {
+      "target": "@mui/x-date-pickers",
+      "review": "ה-API של @mui/x-date-pickers שונה מ-@material-ui/pickers (LocalizationProvider, adapter, שמות רכיבים) – נדרשת בדיקה ידנית"
+    },
+    "@material-ui/styles": {
+      "target": null,
+      "manual": "ל-@material-ui/styles אין יעד ב-MUI v7 – מטופל ב-codemod-makestyles"
+    }
+  },
+  "renames": {
+    "createMuiTheme": "createTheme",
+    "MuiThemeProvider": "ThemeProvider",
+    "fade": "alpha",
+    "GridList": "ImageList",
+    "GridListTile": "ImageListItem",
+    "GridListTileBar": "ImageListItemBar",
+    "ExpansionPanel": "Accordion",
+    "ExpansionPanelSummary": "AccordionSummary",
+    "ExpansionPanelDetails": "AccordionDetails",
+    "ExpansionPanelActions": "AccordionActions"
+  },
+  "manual": {
+    "makeStyles": "מטופל ב-codemod-makestyles",
+    "withStyles": "מטופל ב-codemod-makestyles",
+    "createStyles": "חלק מ-makeStyles – מטופל ב-codemod-makestyles",
+    "StylesProvider": "חלק מתשתית JSS – מטופל ב-codemod-makestyles",
+    "Hidden": "הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery / sx display)",
+    "withWidth": "הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery)"
+  },
+  "palette": {
+    "from": "type",
+    "to": "mode"
+  }
+}

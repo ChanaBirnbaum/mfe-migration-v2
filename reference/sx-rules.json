@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "JSS (makeStyles) and sx read numbers differently. Verified against @mui/system@7 (spacing.js, sizing.js, borders.js, cssGrid.js).",
+    "spacingShorthands: theme.spacing(n) with a single numeric literal -> sx shorthand with the bare number (sx multiplies by theme.spacing).",
+    "numericPx: properties where sx transforms a bare number (spacing multiplier, sizing 0<n<=1 -> %, borderRadius * shape.borderRadius,",
+    "  border n -> 'npx solid'). JSS treats the same number as px, so numbers here are rewritten as explicit 'Npx' strings (0 stays 0).",
+    "jssOnly: key patterns that only JSS understands ($rule references, @global, plugins) – such styles are left for manual conversion."
+  ],
+  "spacingShorthands": {
+    "margin": "m", "marginTop": "mt", "marginRight": "mr", "marginBottom": "mb", "marginLeft": "ml",
+    "padding": "p", "paddingTop": "pt", "paddingRight": "pr", "paddingBottom": "pb", "paddingLeft": "pl",
+    "gap": "gap", "rowGap": "rowGap", "columnGap": "columnGap"
+  },
+  "numericPx": [
+    "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+    "marginInline", "marginInlineStart", "marginInlineEnd", "marginBlock", "marginBlockStart", "marginBlockEnd",
+    "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+    "paddingInline", "paddingInlineStart", "paddingInlineEnd", "paddingBlock", "paddingBlockStart", "paddingBlockEnd",
+    "gap", "rowGap", "columnGap",
+    "width", "maxWidth", "minWidth", "height", "maxHeight", "minHeight",
+    "border", "borderTop", "borderRight", "borderBottom", "borderLeft", "outline",
+    "borderRadius"
+  ],
+  "jssOnly": {
+    "contains": ["$"],
+    "startsWith": ["@global"],
+    "exact": ["extend", "composes"]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "sourceExtensions": [".js", ".jsx", ".ts", ".tsx"],
+  "skipDirs": ["node_modules", "build", "dist"],
+  "makeStylesModules": ["@material-ui/core", "@material-ui/core/styles", "@material-ui/styles", "@mui/styles"],
+  "pickerModulePrefixes": ["@material-ui/pickers", "@mui/x-date-pickers"],
+  "react18OnlyHooks": ["useId", "useSyncExternalStore", "useTransition", "useDeferredValue", "useInsertionEffect"],
+  "reactDomLegacyApis": ["render", "hydrate", "unmountComponentAtNode", "findDOMNode"],
+  "router": {
+    "modules": ["react-router-dom", "react-router"],
+    "legacyApis": ["Switch", "Redirect", "useHistory", "useRouteMatch"],
+    "legacyProps": {
+      "Route": ["component", "render", "exact"],
+      "NavLink": ["exact"]
+    },
+    "post602Apis": [
+      "createBrowserRouter", "createHashRouter", "createMemoryRouter", "createRoutesFromElements",
+      "RouterProvider", "useNavigation", "useRouteLoaderData", "useLoaderData", "useActionData",
+      "useFetcher", "useFetchers", "useSubmit", "useRouteError", "useMatches", "useRevalidator",
+      "useAsyncValue", "useAsyncError", "Await", "Form", "ScrollRestoration", "useBlocker",
+      "unstable_usePrompt", "useBeforeUnload", "useOutletContext", "unstable_HistoryRouter",
+      "redirect", "json", "defer"
+    ],
+    "post602Props": {
+      "Route": ["loader", "action", "errorElement", "lazy", "shouldRevalidate"]
+    }
+  },
+  "reactElementTypes": ["ReactNode", "ReactElement", "JSX.Element", "ComponentType", "ElementType", "FC", "FunctionComponent"]
+}

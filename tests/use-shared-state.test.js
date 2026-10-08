@@ -12,6 +12,7 @@ const { run, main } = require('../scripts/use-shared-state');
 const ASSET = path.join(__dirname, 'fixtures', 'use-shared-state', 'asset-stand-in.js');
 const ASSET_TEXT = fs.readFileSync(ASSET, 'utf8');
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const lfSha = (s) => sha(s.replace(/\r\n/g, '\n'));
 const OLD = 'export default function useSharedState(n, v) { /* 1.x */ return [v, () => {}]; }\n';
 
 function repo(files) {
@@ -22,7 +23,19 @@ function repo(files) {
   });
   return root;
 }
-const deps = (root) => ({ cwd: root, assetPath: ASSET });
+// skill dir stand-in: reference/versions.json + assets/useSharedState.v<version>.js + assets/useSharedState.meta.json
+function skill(o) {
+  o = Object.assign({ version: '2.0.0', assets: null, meta: null }, o || {});
+  const files = { 'reference/versions.json': JSON.stringify({ assets: { useSharedState: o.version } }) };
+  const assets = o.assets || { ['useSharedState.v' + o.version + '.js']: ASSET_TEXT };
+  Object.keys(assets).forEach((n) => { files['assets/' + n] = assets[n]; });
+  const meta = Object.assign({ version: o.version, source: '', ref: '', sha256: lfSha(ASSET_TEXT), syncedAt: '2026-10-07' }, o.meta || {});
+  files['assets/useSharedState.meta.json'] = JSON.stringify(meta);
+  const dir = repo(files);
+  return { assetsDir: path.join(dir, 'assets'), versionsFile: path.join(dir, 'reference', 'versions.json') };
+}
+const SKILL = skill();
+const deps = (root, sk) => Object.assign({ cwd: root }, sk || SKILL);
 const readIn = (root, rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 
 const GOOD_CALLER = [
@@ -130,14 +143,66 @@ test('commented imports / calls are not call-sites', () => {
   assert.deepStrictEqual(res.callSites, []);
 });
 
-test('missing asset → BLOCKED, nothing written', () => {
+test('asset file name comes from versions.json', () => {
+  const sk = skill({ version: '2.1.0' });
+  const root = repo({});
+  const res = run([], deps(root, sk));
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.assetVersion, '2.1.0');
+  assert.strictEqual(readIn(root, 'src/services/hooks/useSharedState.js'), ASSET_TEXT);
+  assert.match(res.changes[0].detail, /2\.1\.0/);
+});
+
+test('asset for the listed version missing → BLOCKED naming missing and present versions, nothing written', () => {
+  const sk = skill({ version: '2.1.0', assets: { 'useSharedState.v2.0.0.js': ASSET_TEXT, 'other.js': '' } });
   const root = repo({ 'src/hooks/useSharedState.js': OLD });
   let out = '';
-  const code = main([], { cwd: root, assetPath: path.join(root, 'nope.js') }, { stdout: (s) => { out += s; }, stderr: () => {} });
+  const code = main([], deps(root, sk), { stdout: (s) => { out += s; }, stderr: () => {} });
   assert.strictEqual(code, 0);
-  assert.match(out, /asset לא נמצא/);
+  assert.match(out, /2\.1\.0/);
+  assert.match(out, /useSharedState\.v2\.1\.0\.js לא קיים/);
+  assert.match(out, /קיים ב-assets\/: useSharedState\.v2\.0\.0\.js/);
+  assert.doesNotMatch(out, /other\.js/);
   assert.match(out, /RESULT: BLOCKED\n$/);
   assert.strictEqual(readIn(root, 'src/hooks/useSharedState.js'), OLD);
+});
+
+test('versions.json without assets.useSharedState → BLOCKED', () => {
+  const sk = skill();
+  fs.writeFileSync(sk.versionsFile, JSON.stringify({ packageVersion: '2.0.0' }));
+  const res = run([], deps(repo({}), sk));
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.match(res.blockers[0].message, /assets\.useSharedState/);
+});
+
+test('asset edited without updating meta sha256 → BLOCKED, nothing written', () => {
+  const sk = skill({ assets: { 'useSharedState.v2.0.0.js': ASSET_TEXT + '// local tweak\n' } });
+  const root = repo({ 'src/hooks/useSharedState.js': OLD });
+  const res = run([], deps(root, sk));
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.match(res.blockers[0].message, /שונה בלי ש-assets\/useSharedState\.meta\.json עודכן/);
+  assert.ok(res.blockers[0].message.includes(lfSha(ASSET_TEXT)));
+  assert.strictEqual(readIn(root, 'src/hooks/useSharedState.js'), OLD);
+});
+
+test('asset with CRLF line endings still matches meta sha256', () => {
+  const sk = skill({ assets: { 'useSharedState.v2.0.0.js': ASSET_TEXT.replace(/\n/g, '\r\n') } });
+  assert.strictEqual(run([], deps(repo({}), sk)).result, 'OK');
+});
+
+test('meta missing or for another version → BLOCKED', () => {
+  const missing = skill();
+  fs.unlinkSync(path.join(missing.assetsDir, 'useSharedState.meta.json'));
+  assert.match(run([], deps(repo({}), missing)).blockers[0].message, /useSharedState\.meta\.json/);
+  const stale = skill({ meta: { version: '1.9.0' } });
+  assert.match(run([], deps(repo({}), stale)).blockers[0].message, /1\.9\.0.*2\.0\.0/);
+});
+
+test('bundled asset: version in versions.json exists and matches assets/useSharedState.meta.json', () => {
+  const res = run(['--dry-run'], { cwd: repo({}) });
+  assert.notStrictEqual(res.result, 'BLOCKED', res.blockers.map((b) => b.message).join('; '));
+  const meta = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'assets', 'useSharedState.meta.json'), 'utf8'));
+  assert.strictEqual(res.assetVersion, meta.version);
 });
 
 test('--dry-run writes nothing; --json has replaced / previousSha / callSites', () => {

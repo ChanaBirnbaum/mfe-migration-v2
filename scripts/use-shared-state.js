@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 'use strict';
 
-// use-shared-state: install useSharedState v2.0.0 (bundled asset) into the service and verify its call-sites.
-// The asset is copied byte-for-byte – this script never edits the hook itself.
+// use-shared-state: install the bundled useSharedState asset into the service and verify its call-sites.
+// The asset version comes from reference/versions.json (assets.useSharedState); the asset's sha256 must match
+// assets/useSharedState.meta.json. The asset is copied byte-for-byte – this script never edits the hook itself.
 
 const path = require('path');
 const crypto = require('crypto');
 
 const SCRIPT = 'use-shared-state';
-const ASSET = path.join(__dirname, '..', 'assets', 'useSharedState.v2.0.0.js');
+const SKILL_DIR = path.join(__dirname, '..');
+const ASSETS_DIR = path.join(SKILL_DIR, 'assets');
+const VERSIONS_FILE = path.join(SKILL_DIR, 'reference', 'versions.json');
 const HOOK_NAME = 'useSharedState';
+const ASSET_FILE_RE = /^useSharedState\.v(.+)\.js$/;
 const HOOK_FILE_RE = /^useSharedState\.(js|jsx|ts|tsx)$/;
 const DEFAULT_TARGET = 'src/services/hooks/useSharedState.js';
 const BACKUP_DIR = '.migration/backup';
@@ -97,7 +101,7 @@ function scanCallSites(tsm, fs, root, hookFiles) {
       if (d.getDefaultImport()) locals.push(d.getDefaultImport().getText());
       d.getNamedImports().forEach((s) => {
         if (s.getName() === 'default') locals.push(s.getAliasNode() ? s.getAliasNode().getText() : s.getName());
-        else site(line, false, 'import { ' + s.getName() + ' } – גרסה 2.0.0 מייצאת export default בלבד');
+        else site(line, false, 'import { ' + s.getName() + ' } – ה-hook מייצא export default בלבד');
       });
       if (d.getNamespaceImport()) site(line, false, 'import * as ' + d.getNamespaceImport().getText() + ' – יש לייבא את ה-default');
     });
@@ -141,15 +145,56 @@ function scanCallSites(tsm, fs, root, hookFiles) {
 }
 
 // ---------------------------------------------------------------------------
+// Asset: version from versions.json, integrity from meta.json. Reads the skill's own files (never the target fs).
+
+function loadAsset(assetsDir, versionsFile) {
+  const realFs = require('fs');
+  const fail = (m) => ({ error: m });
+  let version;
+  try {
+    const assets = JSON.parse(realFs.readFileSync(versionsFile, 'utf8')).assets;
+    version = assets && assets[HOOK_NAME];
+  } catch (err) {
+    return fail('לא ניתן לטעון את reference/versions.json: ' + err.message);
+  }
+  if (typeof version !== 'string' || !version) return fail('reference/versions.json: חסר assets.' + HOOK_NAME + ' (גרסת ה-asset)');
+
+  const fileName = HOOK_NAME + '.v' + version + '.js';
+  let buf;
+  try {
+    buf = realFs.readFileSync(path.join(assetsDir, fileName));
+  } catch (err) {
+    let present = [];
+    try { present = realFs.readdirSync(assetsDir).filter((n) => ASSET_FILE_RE.test(n)).sort(); } catch (_) { /* no dir */ }
+    return fail('גרסת ה-asset הרשומה ב-reference/versions.json היא ' + version + ', אך assets/' + fileName + ' לא קיים (' + err.code + '). ' +
+      (present.length ? 'קיים ב-assets/: ' + present.join(', ') : 'אין ב-assets/ אף קובץ useSharedState.v*.js'));
+  }
+
+  const metaName = HOOK_NAME + '.meta.json';
+  let meta;
+  try { meta = JSON.parse(realFs.readFileSync(path.join(assetsDir, metaName), 'utf8')); } catch (err) {
+    return fail('לא ניתן לטעון את assets/' + metaName + ': ' + err.message);
+  }
+  if (meta.version !== version) {
+    return fail('assets/' + metaName + ' מתאר את גרסה ' + meta.version + ' אך reference/versions.json רושם ' + version + ' – יש לעדכן את ה-meta');
+  }
+  // sha256 over LF-normalized content, so autocrlf checkouts on Windows don't trip the check
+  const actual = normalizedSha(buf);
+  if (meta.sha256 !== actual) {
+    return fail('assets/' + fileName + ' שונה בלי ש-assets/' + metaName + ' עודכן (sha256 ב-meta: ' + (meta.sha256 || '–') + ', בפועל: ' + actual + '). ' +
+      'אם השינוי מכוון – סנכרן אותו למקור ועדכן את sha256 / ref / syncedAt ב-meta; אחרת שחזר את הקובץ');
+  }
+  return { buf: buf, version: version };
+}
 
 function run(argv, overrides) {
-  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd(), assetPath: ASSET }, overrides || {});
+  const deps = Object.assign({ fs: require('fs'), cwd: process.cwd(), assetsDir: ASSETS_DIR, versionsFile: VERSIONS_FILE }, overrides || {});
   const opts = parseArgs(argv || []);
   const fs = deps.fs;
   const root = deps.cwd;
   const res = {
     script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun,
-    hookPath: null, replaced: false, created: false, previousSha: null, assetSha: null, backup: null, callSites: [],
+    hookPath: null, replaced: false, created: false, previousSha: null, assetVersion: null, assetSha: null, backup: null, callSites: [],
   };
   const blocked = (m) => { res.result = 'BLOCKED'; res.blockers.push({ message: m }); return res; };
   if (opts.errors.length) return blocked(opts.errors.join('; '));
@@ -160,19 +205,17 @@ function run(argv, overrides) {
   }
 
   // asset
-  let asset;
-  try {
-    asset = require('fs').readFileSync(deps.assetPath);
-  } catch (err) {
-    return blocked('קובץ ה-asset לא נמצא: ' + toPosix(path.relative(path.join(__dirname, '..'), deps.assetPath)) +
-      ' – יש להוסיף לסקיל את useSharedState בגרסה 2.0.0 (' + err.code + ')');
-  }
+  const loaded = loadAsset(deps.assetsDir, deps.versionsFile);
+  if (loaded.error) return blocked(loaded.error);
+  const asset = loaded.buf;
+  const ver = loaded.version;
+  res.assetVersion = ver;
   res.assetSha = sha256(asset);
   {
     const p = new tsm.Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } });
     const asf = p.createSourceFile('/asset.js', asset.toString('utf8').replace(/^﻿/, ''));
     if (!asf.getDefaultExportSymbol() && !asf.getExportAssignments().length) {
-      return blocked('ה-asset אינו מכיל export default – אינו תואם ל-API של 2.0.0');
+      return blocked('ה-asset אינו מכיל export default – אינו תואם ל-API של ' + ver);
     }
   }
 
@@ -194,7 +237,7 @@ function run(argv, overrides) {
     try { current = fs.readFileSync(full); } catch (err) { return blocked('לא ניתן לקרוא את ' + rels[0] + ': ' + err.message); }
     res.previousSha = sha256(current);
     if (normalizedSha(current) === normalizedSha(asset)) {
-      res.notes.push(rels[0] + ' כבר בגרסה 2.0.0');
+      res.notes.push(rels[0] + ' כבר בגרסה ' + ver);
     } else if (!/\.jsx?$/.test(full)) {
       res.result = 'REVIEW';
       res.manual.push({ file: rels[0], line: null, reason: 'הקובץ הקיים הוא TypeScript וה-asset הוא JavaScript – החלפה ידנית (או הוספת טיפוסים) נדרשת' });
@@ -212,7 +255,7 @@ function run(argv, overrides) {
         }
       }
       res.replaced = true;
-      res.changes.push({ file: rels[0], rule: 'SHARED_STATE.REPLACE', confidence: 'auto', detail: 'הוחלף ב-2.0.0, גיבוי ב-' + backupRel });
+      res.changes.push({ file: rels[0], rule: 'SHARED_STATE.REPLACE', confidence: 'auto', detail: 'הוחלף ב-' + ver + ', גיבוי ב-' + backupRel });
     }
   } else {
     res.hookPath = DEFAULT_TARGET;
@@ -226,7 +269,7 @@ function run(argv, overrides) {
       }
     }
     res.created = true;
-    res.changes.push({ file: DEFAULT_TARGET, rule: 'SHARED_STATE.CREATE', confidence: 'auto', detail: 'נוצר מ-asset 2.0.0' });
+    res.changes.push({ file: DEFAULT_TARGET, rule: 'SHARED_STATE.CREATE', confidence: 'auto', detail: 'נוצר מ-asset ' + ver });
   }
 
   // call-sites
@@ -249,9 +292,9 @@ function formatText(res) {
   const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '')];
   if (res.result === 'BLOCKED') res.blockers.forEach((b) => L.push('⛔ ' + b.message));
   else {
-    if (res.created) L.push('🆕 ' + res.hookPath + ' ' + (res.dryRun ? 'היה נוצר' : 'נוצר') + ' (asset ' + res.assetSha.slice(0, 12) + ')');
+    if (res.created) L.push('🆕 ' + res.hookPath + ' ' + (res.dryRun ? 'היה נוצר' : 'נוצר') + ' (asset ' + res.assetVersion + ' ' + res.assetSha.slice(0, 12) + ')');
     else if (res.replaced) L.push('🔁 ' + res.hookPath + ' ' + (res.dryRun ? 'היה מוחלף' : 'הוחלף') + ' (' + res.previousSha.slice(0, 12) + ' → ' + res.assetSha.slice(0, 12) + '), גיבוי: ' + res.backup);
-    else if (res.hookPath && res.previousSha) L.push('✓ ' + res.hookPath + ' זהה לגרסה 2.0.0');
+    else if (res.hookPath && res.previousSha) L.push('✓ ' + res.hookPath + ' זהה לגרסה ' + res.assetVersion);
     const ok = res.callSites.filter((s) => s.ok).length;
     L.push('📞 ' + res.callSites.length + ' call-sites' + (res.callSites.length ? ' (' + ok + ' תקינים)' : ''));
     res.manual.forEach((m) => L.push('✋ ' + (m.file ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason));

@@ -27,7 +27,7 @@
 | 7 | codemod-anti-patterns | `codemod-anti-patterns.js` | `useEffect(async …)` → פונקציה פנימית + cancelled guard | `--no-cancel-guard` | `src/**` |
 | 8 | commit-mechanical | `commit.js --step mechanical` | commit לשלבים 4–7 | – | commit |
 | 9 | codemod-makestyles | `codemod-makestyles.js` | `makeStyles` → אובייקט סגנונות דרך `sx` / `slotProps` | – | `src/**` |
-| 10 | use-shared-state | `use-shared-state.js` | מתקין את `assets/useSharedState.v2.0.0.js` ובודק את ה-call-sites | – | `src/**`, גיבוי ב-`.migration/backup/` |
+| 10 | use-shared-state | `use-shared-state.js` | מתקין את `assets/useSharedState.v<גרסה>.js` (גרסה מ-`reference/versions.json`, sha256 מאומת מול `assets/useSharedState.meta.json`) ובודק את ה-call-sites | – | `src/**`, גיבוי ב-`.migration/backup/` |
 | 11 | webpack-shared | `webpack-shared.js` | `shared` → `buildSharedGen1({ pkg, require, role })` | – | `webpack.config.js` |
 | 12 | commit-infra | `commit.js --step infra` | commit לשלבים 9–11 | – | commit |
 | 13 | install | `install.js` | מוחק `node_modules` ו-`package-lock.json`, ‏`npm install` נקי. לעולם לא `--legacy-peer-deps` / `--force` | `--timeout` | `node_modules`, `package-lock.json` |
@@ -55,7 +55,7 @@ node <skill-dir>/scripts/run.js [--resume] [--answer <key>=<value>]... [--from <
 
 | קובץ | נקרא על ידי |
 |---|---|
-| `reference/versions.json` | preflight, scan, package-json |
+| `reference/versions.json` | preflight, scan, package-json, use-shared-state |
 | `reference/deny-list.json` | scan |
 | `reference/scan-rules.json` | scan, package-json |
 | `reference/mui-mapping.json` | codemod-mui-imports |

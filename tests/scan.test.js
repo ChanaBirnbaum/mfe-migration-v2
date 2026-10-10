@@ -244,10 +244,10 @@ test('deny-list: only incompatible versions, copied to the top-level blockers[] 
   assert.strictEqual(dnd.fixedIn, '13.1.1');
   assert.strictEqual(dnd.checkedVersion, '12.2.0');
   assert.deepStrictEqual(RES.blockers.map((x) => [x.package, x.range, x.suggestion]), [
-    ['react-beautiful-dnd', '^12.2.0', 'שדרוג ל-13.1.1 או החלפה ב-@hello-pangea/dnd'],
-    ['enzyme', '^3.11.0', 'החלפה ב-@testing-library/react'],
+    ['react-beautiful-dnd', '^12.2.0', 'upgrade to 13.1.1 or replace with @hello-pangea/dnd'],
+    ['enzyme', '^3.11.0', 'replace with @testing-library/react'],
   ]);
-  assert.match(RES.blockers[1].message, /^חבילה לא תואמת React 18: enzyme \^3\.11\.0 \(devDependencies\) – /);
+  assert.match(RES.blockers[1].message, /^Package not compatible with React 18: enzyme \^3\.11\.0 \(devDependencies\) – /);
   assert.strictEqual(RES.result, 'BLOCKED'); // also has react18Only – BLOCKED wins over REVIEW
 });
 
@@ -324,7 +324,7 @@ test('jssApis: withStyles / createStyles / StylesProvider with file, line, modul
     ['Unused.jsx', 1, 'createStyles', 'import', '@material-ui/core', false],
   ]);
   // only @material-ui imports outside makeStyles break the build
-  assert.match(formatText(res), /🧱 JSS ללא המרה: withStyles ×1, StylesProvider ×1, createStyles ×1 ב-2 קבצים \(\+2 /);
+  assert.match(formatText(res), /🧱 JSS without conversion: withStyles ×1, StylesProvider ×1, createStyles ×1 in 2 files \(\+2 /);
 });
 
 test('routerImports: every react-router(-dom) import with file and line', () => {
@@ -480,13 +480,13 @@ test('text output: Hebrew summary, RESULT last', () => {
   assert.strictEqual(code, 0);
   assert.match(out, /📦 hasava-mfe/);
   assert.match(out, /React 17\.0\.2 → 18\.3\.1/);
-  assert.match(out, /10 קבצים נסרקו/);
-  assert.match(out, /3 קבצים עם @material-ui\/core/);
-  assert.match(out, /3 מופעי makeStyles: 1 static \| 1 theme \| 1 props/);
+  assert.match(out, /10 files scanned/);
+  assert.match(out, /3 files with @material-ui\/core/);
+  assert.match(out, /3 makeStyles instances: 1 static \| 1 theme \| 1 props/);
   // a deny-list BLOCKED still prints the full inventory summary, not "scan failed"
-  assert.doesNotMatch(out, /הסריקה נכשלה/);
-  assert.match(out, /⛔ 2 חבילות לא תואמות React 18:/);
-  assert.match(out, /⛔ 2 חסמים – /);
+  assert.doesNotMatch(out, /The scan failed/);
+  assert.match(out, /⛔ 2 packages not compatible with React 18:/);
+  assert.match(out, /⛔ 2 blockers – /);
   assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: BLOCKED');
 });
 
@@ -539,7 +539,7 @@ test('result: deny-list match with unknown version (not installed, "latest") →
   assert.deepStrictEqual(res.blockers, []);
   assert.strictEqual(res.manual.length, 1);
   assert.strictEqual(res.manual[0].file, 'package.json');
-  assert.match(res.manual[0].reason, /react-beautiful-dnd latest.*הגרסה לא ודאית/);
+  assert.match(res.manual[0].reason, /react-beautiful-dnd latest.*The version is uncertain/);
 });
 
 test('result: deny-list + react18Only → BLOCKED wins', () => {

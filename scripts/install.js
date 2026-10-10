@@ -31,11 +31,11 @@ function parseArgs(argv) {
     else if (a === '--timeout' || a.startsWith('--timeout=')) {
       const v = a === '--timeout' ? argv[++i] : a.slice('--timeout='.length);
       const ms = parseDuration(v);
-      if (ms === null) opts.errors.push('‎--timeout לא תקין: "' + v + '" (דוגמאות: 20, 20m, 900s)');
+      if (ms === null) opts.errors.push('Invalid --timeout: "' + v + '" (examples: 20, 20m, 900s)');
       else opts.timeoutMs = ms;
     } else if (FORBIDDEN_FLAGS.indexOf(a) !== -1) {
-      opts.errors.push(a + ' אסור – פתרון קונפליקט peer deps הוא החלטת אדם');
-    } else opts.errors.push('פרמטר לא מוכר: ' + a);
+      opts.errors.push(a + ' is not allowed – resolving a peer deps conflict is a human decision');
+    } else opts.errors.push('Unknown argument: ' + a);
   }
   return opts;
 }
@@ -57,7 +57,7 @@ function diagnose(output, fs) {
     if (reportPath) { try { report = fs.readFileSync(reportPath, 'utf8'); } catch (_) { report = null; } }
     return {
       kind: 'ERESOLVE',
-      message: 'ERESOLVE – קונפליקט peer dependencies. לא נוסף --legacy-peer-deps / --force: פתרון הקונפליקט הוא החלטת אדם',
+      message: 'ERESOLVE – peer dependencies conflict. --legacy-peer-deps / --force were not added: resolving the conflict is a human decision',
       tree: report || errLines.filter((l) => !/^(code|A complete log|See |To permanently fix|Fix the upstream|this command with|to accept an incorrect)/.test(l)).join('\n'),
       reportPath: reportPath || null,
     };
@@ -70,18 +70,18 @@ function diagnose(output, fs) {
     return {
       kind: 'E404',
       package: pkg,
-      message: '404 – החבילה ' + (pkg || '(לא זוהתה)') + ' לא נמצאה ב-registry' + (url ? ' (' + url[1].split('/').slice(0, 3).join('/') + ')' : '') +
-        '. בדוק שהיא קיימת ב-registry הפנימי או שהגרסה ב-package.json נכונה',
+      message: '404 – package ' + (pkg || '(not identified)') + ' was not found in the registry' + (url ? ' (' + url[1].split('/').slice(0, 3).join('/') + ')' : '') +
+        '. Check that it exists in the internal registry and that the version in package.json is correct',
     };
   }
   if (code === 'EACCES' || code === 'EPERM') {
     const p = (/path (\S+)/.exec(errText) || [])[1];
-    return { kind: code, message: 'אין הרשאות כתיבה' + (p ? ' ל-' + p : '') + ' – סגור תהליכים שמחזיקים קבצים ב-node_modules (IDE, dev server) ובדוק הרשאות. אל תריץ כ-admin/sudo' };
+    return { kind: code, message: 'No write permission' + (p ? ' to ' + p : '') + ' – close processes that hold files in node_modules (IDE, dev server) and check permissions. Do not run as admin/sudo' };
   }
-  if (code === 'ENOSPC') return { kind: 'ENOSPC', message: 'אין מקום פנוי בדיסק – פנה מקום (גם ב-npm cache) והרץ שוב' };
-  if (code === 'E401' || code === 'E403') return { kind: code, message: 'כשל הרשאה מול ה-registry (' + code + ') – בדוק את ה-token ב-.npmrc' };
-  if (/^(ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN)$/.test(code || '')) return { kind: code, message: 'כשל רשת מול ה-registry (' + code + ')' };
-  return { kind: code || 'UNKNOWN', message: 'npm install נכשל' + (code ? ' (' + code + ')' : '') + ': ' + (errLines.filter((l) => !/^code /.test(l)).slice(0, 5).join(' | ') || firstLines(output.split(/\r?\n/).slice(-5).join('\n'), 5)) };
+  if (code === 'ENOSPC') return { kind: 'ENOSPC', message: 'No free disk space – free up space (including the npm cache) and run again' };
+  if (code === 'E401' || code === 'E403') return { kind: code, message: 'Registry authorization failed (' + code + ') – check the token in .npmrc' };
+  if (/^(ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN)$/.test(code || '')) return { kind: code, message: 'Network failure reaching the registry (' + code + ')' };
+  return { kind: code || 'UNKNOWN', message: 'npm install failed' + (code ? ' (' + code + ')' : '') + ': ' + (errLines.filter((l) => !/^code /.test(l)).slice(0, 5).join(' | ') || firstLines(output.split(/\r?\n/).slice(-5).join('\n'), 5)) };
 }
 
 function collectWarnings(output) {
@@ -139,17 +139,17 @@ async function run(argv, overrides) {
     }
   };
 
-  if (!fs.existsSync(path.join(root, 'package.json'))) return blocked('package.json לא נמצא ב-' + root);
+  if (!fs.existsSync(path.join(root, 'package.json'))) return blocked('package.json not found in ' + root);
 
   // ---- precondition: nothing that is deleted can lose work ----
   const repo = git(['rev-parse', '--is-inside-work-tree']);
-  if (!repo.ok || repo.out.trim() !== 'true') return blocked('התיקייה אינה git repo – אין דרך לשחזר את package-lock.json אחרי המחיקה');
+  if (!repo.ok || repo.out.trim() !== 'true') return blocked('The folder is not a git repo – there would be no way to restore package-lock.json after deleting it');
   const status = git(['status', '--porcelain']);
-  if (!status.ok) return blocked('git status נכשל: ' + firstLines(status.err));
+  if (!status.ok) return blocked('git status failed: ' + firstLines(status.err));
   const dirty = status.out.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim());
   const head = git(['rev-parse', '--verify', '-q', 'HEAD']);
   if (dirty.length && !(head.ok && head.out.trim())) {
-    return blocked('אין אף commit ועץ העבודה אינו נקי – בצע commit לפני מחיקת node_modules ו-package-lock.json');
+    return blocked('There are no commits and the working tree is not clean – commit before deleting node_modules and package-lock.json');
   }
   // package-lock.json שתוכנו אינו ב-git (M / ??) – מגבים לפני המחיקה במקום לחסום.
   // כך הרצה חוזרת (למשל אחרי ERESOLVE שכבר מחק את ה-lock) אינה נחסמת, ושום דבר לא אובד.
@@ -163,11 +163,11 @@ async function run(argv, overrides) {
   }
   const tracked = git(['ls-files', '--', 'node_modules']);
   if (tracked.ok && tracked.out.trim()) {
-    return blocked('node_modules נמצא במעקב git (' + tracked.out.trim().split('\n').length + ' קבצים) – מחיקתו תיראה כשינוי בריפו; יש לטפל בזה ידנית');
+    return blocked('node_modules is tracked by git (' + tracked.out.trim().split('\n').length + ' files) – deleting it would show up as a repo change; handle this manually');
   }
   const otherDirty = dirty.filter((l) => l !== lockEntry);
-  if (otherDirty.length) res.notes.push('יש ' + otherDirty.length + ' שינויים פתוחים בעץ העבודה – הם לא נוגעים ב-node_modules / package-lock.json ולכן לא נפגעים');
-  if (lockBackup) res.notes.push('ל-package-lock.json יש תוכן שאינו ב-git – ' + (opts.dryRun ? 'היה מגובה' : 'גובה') + ' ל-' + lockBackup + ' לפני המחיקה');
+  if (otherDirty.length) res.notes.push(otherDirty.length + ' uncommitted changes in the working tree – they do not touch node_modules / package-lock.json, so they are not affected');
+  if (lockBackup) res.notes.push('package-lock.json has content that is not in git – ' + (opts.dryRun ? 'it would be backed up' : 'backed up') + ' to ' + lockBackup + ' before deleting');
 
   const npmDisplay = 'npm ' + NPM_ARGS.join(' ');
   const plan = ['rm -rf node_modules', 'rm -f package-lock.json', npmDisplay];
@@ -182,7 +182,7 @@ async function run(argv, overrides) {
       const dest = path.join(root, lockBackup);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       if (!fs.existsSync(dest)) fs.copyFileSync(lockPath, dest);
-      res.changes.push({ file: lockBackup, rule: 'INSTALL.LOCK_BACKUP', confidence: 'auto', detail: 'גיבוי של package-lock.json שלא היה ב-git' });
+      res.changes.push({ file: lockBackup, rule: 'INSTALL.LOCK_BACKUP', confidence: 'auto', detail: 'backup of package-lock.json that was not in git' });
     }
     fs.rmSync(path.join(root, 'node_modules'), { recursive: true, force: true, maxRetries: 3 });
     res.commands.push({ command: plan[0], status: 'done' });
@@ -190,8 +190,8 @@ async function run(argv, overrides) {
     res.commands.push({ command: plan[1], status: 'done' });
   } catch (err) {
     const msg = err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES'
-      ? 'לא ניתן למחוק את node_modules (' + err.code + ') – קובץ נעול. סגור IDE / dev server / תהליכי node והרץ שוב'
-      : 'מחיקה נכשלה: ' + err.message;
+      ? 'Cannot delete node_modules (' + err.code + ') – a file is locked. Close the IDE / dev server / node processes and run again'
+      : 'Delete failed: ' + err.message;
     return blocked(msg);
   }
 
@@ -212,7 +212,7 @@ async function run(argv, overrides) {
     }
     const onData = (chunk) => { const s = chunk.toString(); output += s; deps.onOutput(s); };
     if (child.stdout) child.stdout.on('data', onData);
-    if (child.stderr) child.stderr.on('data', onData); // ל-stdout בלבד – ראה החוזה
+    if (child.stderr) child.stderr.on('data', onData); // to stdout only – see the contract
     child.on('error', (err) => finish({ code: null, spawnError: err }));
     child.on('close', (code) => finish({ code: code }));
     const timer = setTimeout(() => { killTree(child, deps.platform, deps.cp); finish({ code: null, timedOut: true }); }, opts.timeoutMs);
@@ -221,18 +221,18 @@ async function run(argv, overrides) {
   res.commands.push({ command: npmDisplay, status: outcome.code === 0 ? 'done' : 'failed' });
   res.warnings = collectWarnings(outcome.output);
 
-  if (outcome.timedOut) return blocked('npm install לא הסתיים תוך ' + Math.round(opts.timeoutMs / 60000) + ' דקות – התהליך הופסק. בדוק את ה-registry או הרץ עם --timeout גדול יותר', { kind: 'timeout' });
-  if (outcome.spawnError) return blocked('לא ניתן להריץ npm: ' + outcome.spawnError.message, { kind: 'spawn' });
+  if (outcome.timedOut) return blocked('npm install did not finish within ' + Math.round(opts.timeoutMs / 60000) + ' minutes – the process was stopped. Check the registry or run with a larger --timeout', { kind: 'timeout' });
+  if (outcome.spawnError) return blocked('Cannot run npm: ' + outcome.spawnError.message, { kind: 'spawn' });
   if (outcome.code !== 0) {
     const d = diagnose(outcome.output, fs);
     return blocked(d.message, d);
   }
 
   res.installedPackages = countInstalled(outcome.output, fs, path.join(root, 'package-lock.json'));
-  res.changes.push({ file: 'package-lock.json', rule: 'INSTALL.LOCK', confidence: 'auto', detail: 'נוצר מחדש' });
-  res.notes.push('package-lock.json נוצר מחדש – יש לבצע לו commit');
+  res.changes.push({ file: 'package-lock.json', rule: 'INSTALL.LOCK', confidence: 'auto', detail: 'regenerated' });
+  res.notes.push('package-lock.json was regenerated – it needs to be committed');
   const peer = res.warnings.filter((w) => /ERESOLVE|peer dep/i.test(w));
-  if (peer.length) res.notes.push(peer.length + ' אזהרות peer dependencies – ההתקנה הצליחה, אך כדאי לעבור עליהן');
+  if (peer.length) res.notes.push(peer.length + ' peer dependencies warnings – the install succeeded, but they are worth reviewing');
   return res;
 }
 
@@ -241,11 +241,11 @@ function formatText(res) {
   const sym = { done: '✓', failed: '⛔', planned: '→' };
   res.commands.forEach((c) => L.push(sym[c.status] + ' ' + c.command));
   if (res.result !== 'BLOCKED' && !res.dryRun) {
-    L.push('📦 ' + (res.installedPackages === null ? '?' : res.installedPackages) + ' חבילות | ⏱ ' + Math.round(res.durationMs / 1000) + 's | ⚠ ' + res.warnings.length + ' אזהרות');
+    L.push('📦 ' + (res.installedPackages === null ? '?' : res.installedPackages) + ' packages | ⏱ ' + Math.round(res.durationMs / 1000) + 's | ⚠ ' + res.warnings.length + ' warnings');
   }
   res.blockers.forEach((b) => {
     L.push('⛔ ' + b.message);
-    if (b.tree) { L.push('   עץ הקונפליקט:'); b.tree.split(/\r?\n/).forEach((l) => L.push('   | ' + l)); }
+    if (b.tree) { L.push('   conflict tree:'); b.tree.split(/\r?\n/).forEach((l) => L.push('   | ' + l)); }
     (b.files || []).forEach((f) => L.push('     ' + f));
   });
   res.notes.forEach((n) => L.push('ℹ ' + n));

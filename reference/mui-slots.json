@@ -44,7 +44,7 @@
         "groupUl": { "host": "listbox", "selector": "& .MuiAutocomplete-groupUl", "inferred": true },
         "loading": { "host": "paper", "selector": "& .MuiAutocomplete-loading", "inferred": true },
         "noOptions": { "host": "paper", "selector": "& .MuiAutocomplete-noOptions", "inferred": true },
-        "focusVisible": { "manual": "focusVisible מוגדר ב-autocompleteClasses אך אינו מוחל ב-v7" }
+        "focusVisible": { "manual": "focusVisible is defined in autocompleteClasses but is not applied in v7" }
       }
     },
     "Dialog": {
@@ -81,7 +81,7 @@
     "Popper": {
       "prefix": "MuiPopper",
       "classesProp": false,
-      "_note": "Popper ב-v7 אינו מקבל classes ואין לו slot בשם paper. classes על Popper (במיוחד paper) הוא טעות – manual.",
+      "_note": "Popper in v7 does not accept classes and has no slot named paper. classes on Popper (especially paper) is a mistake – manual.",
       "root": false,
       "slots": {},
       "hooks": {}
@@ -89,7 +89,7 @@
     "Tooltip": {
       "prefix": "MuiTooltip",
       "root": false,
-      "_note": "ל-Tooltip אין אלמנט root משלו – ה-popper וה-tooltip מרונדרים ב-portal.",
+      "_note": "Tooltip has no root element of its own – the popper and the tooltip are rendered in a portal.",
       "slots": { "popper": "popper", "tooltip": "tooltip", "arrow": "arrow" },
       "hooks": {
         "popperInteractive": { "host": "popper", "selector": "&.MuiTooltip-popperInteractive" },
@@ -100,7 +100,7 @@
         "tooltipPlacementRight": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementRight" },
         "tooltipPlacementTop": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementTop" },
         "tooltipPlacementBottom": { "host": "tooltip", "selector": "&.MuiTooltip-tooltipPlacementBottom" },
-        "popperClose": { "manual": "popperClose מוגדר ב-tooltipClasses אך אינו מוחל ב-v7" }
+        "popperClose": { "manual": "popperClose is defined in tooltipClasses but is not applied in v7" }
       }
     },
     "Drawer": {
@@ -126,14 +126,14 @@
     "TextField": {
       "prefix": "MuiTextField",
       "root": true,
-      "_note": "classes של TextField מכיל רק root. slotProps קיימים (input, inputLabel, htmlInput, formHelperText, select) אך אין להם מפתח classes מקביל.",
+      "_note": "TextField classes contain only root. slotProps exist (input, inputLabel, htmlInput, formHelperText, select) but have no matching classes key.",
       "slots": {},
       "hooks": {}
     },
     "Select": {
       "prefix": "MuiSelect",
       "root": true,
-      "_note": "המחלקות מוחלות ב-SelectInput על אלמנטים פנימיים של ה-root. ל-Select אין slotProps – ה-Menu נשלט דרך MenuProps.",
+      "_note": "The classes are applied in SelectInput to inner elements of the root. Select has no slotProps – the Menu is controlled through MenuProps.",
       "slots": {},
       "hooks": {
         "select": { "host": "root", "selector": "& .MuiSelect-select" },
@@ -149,7 +149,7 @@
         "nativeInput": { "host": "root", "selector": "& .MuiSelect-nativeInput" },
         "disabled": { "host": "root", "selector": "& .MuiSelect-select.Mui-disabled", "inferred": true },
         "error": { "host": "root", "selector": "& .MuiSelect-select.Mui-error", "inferred": true },
-        "focused": { "manual": "focused מוגדר ב-selectClasses אך אינו מוחל ב-v7" }
+        "focused": { "manual": "focused is defined in selectClasses but is not applied in v7" }
       }
     },
     "Table": {
@@ -201,7 +201,7 @@
     "Snackbar": {
       "prefix": "MuiSnackbar",
       "root": true,
-      "_note": "ל-Snackbar יש slot בשם content (SnackbarContent) אך אין מפתח classes מקביל.",
+      "_note": "Snackbar has a slot named content (SnackbarContent) but no matching classes key.",
       "slots": {},
       "hooks": {
         "anchorOriginTopCenter": { "host": "root", "selector": "&.MuiSnackbar-anchorOriginTopCenter" },

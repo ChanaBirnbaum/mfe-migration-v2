@@ -130,7 +130,7 @@ test('invalid call-sites → REVIEW with each location', () => {
   assert.deepStrictEqual(bad, [2, 4, 5, 6, 8]);
   assert.ok(res.callSites.some((s) => s.line === 7 && s.ok));
   assert.match(res.callSites.find((s) => s.line === 2).reason, /export default/);
-  assert.match(res.callSites.find((s) => s.line === 6).reason, /3 ארגומנטים.*3 איברים/);
+  assert.match(res.callSites.find((s) => s.line === 6).reason, /3 arguments.*3 elements/);
 });
 
 test('commented imports / calls are not call-sites', () => {
@@ -160,8 +160,8 @@ test('asset for the listed version missing → BLOCKED naming missing and presen
   const code = main([], deps(root, sk), { stdout: (s) => { out += s; }, stderr: () => {} });
   assert.strictEqual(code, 0);
   assert.match(out, /2\.1\.0/);
-  assert.match(out, /useSharedState\.v2\.1\.0\.js לא קיים/);
-  assert.match(out, /קיים ב-assets\/: useSharedState\.v2\.0\.0\.js/);
+  assert.match(out, /useSharedState\.v2\.1\.0\.js does not exist/);
+  assert.match(out, /Present in assets\/: useSharedState\.v2\.0\.0\.js/);
   assert.doesNotMatch(out, /other\.js/);
   assert.match(out, /RESULT: BLOCKED\n$/);
   assert.strictEqual(readIn(root, 'src/hooks/useSharedState.js'), OLD);
@@ -180,7 +180,7 @@ test('asset edited without updating meta sha256 → BLOCKED, nothing written', (
   const root = repo({ 'src/hooks/useSharedState.js': OLD });
   const res = run([], deps(root, sk));
   assert.strictEqual(res.result, 'BLOCKED');
-  assert.match(res.blockers[0].message, /שונה בלי ש-assets\/useSharedState\.meta\.json עודכן/);
+  assert.match(res.blockers[0].message, /was changed without updating assets\/useSharedState\.meta\.json/);
   assert.ok(res.blockers[0].message.includes(lfSha(ASSET_TEXT)));
   assert.strictEqual(readIn(root, 'src/hooks/useSharedState.js'), OLD);
 });

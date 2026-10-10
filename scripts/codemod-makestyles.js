@@ -33,7 +33,7 @@ function parseArgs(argv) {
   argv.forEach((a) => {
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   });
   return opts;
 }
@@ -44,12 +44,12 @@ function listSourceFiles(fs, root) {
   const srcDir = path.join(root, 'src');
   let stat = null;
   try { stat = fs.statSync(srcDir); } catch (_) { /* missing */ }
-  if (!stat || !stat.isDirectory()) throw new CodemodError('תיקיית src/ לא נמצאה ב-' + root);
+  if (!stat || !stat.isDirectory()) throw new CodemodError('No src/ folder found in ' + root);
   const out = [];
   const walk = (dir) => {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
-      throw new CodemodError('לא ניתן לקרוא את ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
+      throw new CodemodError('Cannot read ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
@@ -169,10 +169,10 @@ function transformFile(tsm, sf, file, table, rules, apply) {
   function analyse(call) {
     const line = call.getStartLineNumber();
     const decl = call.getParentIfKind(K.VariableDeclaration);
-    if (!decl || !Node.isIdentifier(decl.getNameNode())) throw new Manual('makeStyles שאינו מוצב ב-const useX = makeStyles(...)', line);
+    if (!decl || !Node.isIdentifier(decl.getNameNode())) throw new Manual('makeStyles that is not assigned as const useX = makeStyles(...)', line);
     const stmt = decl.getVariableStatement();
-    if (!stmt || stmt.getDeclarations().length !== 1 || stmt.getParent() !== sf) throw new Manual('makeStyles שאינו הצהרה עצמאית ברמת המודול', line);
-    if (stmt.isExported()) throw new Manual(decl.getName() + ' מיוצא – ייתכן שימוש מקבצים אחרים', line);
+    if (!stmt || stmt.getDeclarations().length !== 1 || stmt.getParent() !== sf) throw new Manual('makeStyles that is not a standalone module-level declaration', line);
+    if (stmt.isExported()) throw new Manual(decl.getName() + ' is exported – it may be used from other files', line);
 
     const args = call.getArguments();
     let styleArg = unwrap(args[0]);
@@ -183,13 +183,13 @@ function transformFile(tsm, sf, file, table, rules, apply) {
     else if (styleArg && (Node.isArrowFunction(styleArg) || Node.isFunctionExpression(styleArg))) {
       themeFn = styleArg;
       const params = styleArg.getParameters();
-      if (params.length !== 1 || !Node.isIdentifier(params[0].getNameNode())) throw new Manual('פונקציית theme עם פרמטר מפורק / ללא פרמטר', line);
+      if (params.length !== 1 || !Node.isIdentifier(params[0].getNameNode())) throw new Manual('theme function with a destructured parameter / no parameter', line);
       let body = Node.isArrowFunction(styleArg) ? unwrap(styleArg.getBody()) : null;
       if (body && Node.isCallExpression(body) && msApi(body.getExpression()) === 'createStyles') body = unwrap(body.getArguments()[0]);
-      if (!body || !Node.isObjectLiteralExpression(body)) throw new Manual('פונקציית theme עם גוף בלוק / חישובים מקומיים', line);
+      if (!body || !Node.isObjectLiteralExpression(body)) throw new Manual('theme function with a block body / local computations', line);
       obj = body;
     } else {
-      throw new Manual('הארגומנט של makeStyles אינו אובייקט או פונקציית theme', line);
+      throw new Manual('The makeStyles argument is not an object or a theme function', line);
     }
 
     const keys = [];
@@ -200,31 +200,31 @@ function transformFile(tsm, sf, file, table, rules, apply) {
       o.getProperties().forEach((p) => {
         if (!Node.isPropertyAssignment(p)) {
           if (Node.isMethodDeclaration(p)) propsKeys.push(top);
-          else issues.push(p.getKindName() + ' בתוך ' + top);
+          else issues.push(p.getKindName() + ' inside ' + top);
           return;
         }
         const name = propName(p);
-        if (isJssOnly(name)) issues.push("מפתח JSS '" + name + "' ב-" + top);
+        if (isJssOnly(name)) issues.push("JSS key '" + name + "' in " + top);
         const v = unwrap(p.getInitializer());
         if (Node.isArrowFunction(v) || Node.isFunctionExpression(v)) propsKeys.push(top);
-        else if (Node.isArrayLiteralExpression(v)) issues.push('מערך ערכים (fallback של JSS) ב-' + top + '.' + name + ' – ב-sx מערך הוא ערך רספונסיבי');
+        else if (Node.isArrayLiteralExpression(v)) issues.push('Array of values (JSS fallback) in ' + top + '.' + name + ' – in sx an array is a responsive value');
         else if (Node.isObjectLiteralExpression(v)) scanRule(v, top);
       });
     };
     for (const p of obj.getProperties()) {
       const name = Node.isPropertyAssignment(p) ? propName(p) : null;
-      if (!name) throw new Manual('מפתח עליון מסוג ' + p.getKindName() + ' (spread / מחושב / method)', line);
-      if (isJssOnly(name)) throw new Manual("מפתח JSS '" + name + "'", line);
+      if (!name) throw new Manual('Top-level key of kind ' + p.getKindName() + ' (spread / computed / method)', line);
+      if (isJssOnly(name)) throw new Manual("JSS key '" + name + "'", line);
       const v = unwrap(p.getInitializer());
       if (Node.isArrowFunction(v) || Node.isFunctionExpression(v)) { propsKeys.push(name); keys.push({ name: name, prop: p, value: v }); continue; }
-      if (!Node.isObjectLiteralExpression(v)) throw new Manual('הערך של ' + name + ' אינו אובייקט', line);
+      if (!Node.isObjectLiteralExpression(v)) throw new Manual('The value of ' + name + ' is not an object', line);
       if (v.getProperties().length === 0) emptyKeys.add(name);
       scanRule(v, name);
       keys.push({ name: name, prop: p, value: v });
     }
     if (propsKeys.length) {
       const uniq = Array.from(new Set(propsKeys));
-      throw new Manual('רמה C – המפתחות ' + uniq.join(', ') + ' תלויים ב-props (ערך שהוא פונקציה). דורש המרה ידנית ל-sx עם ערכים מחושבים או ל-styled', line);
+      throw new Manual('Level C – the keys ' + uniq.join(', ') + ' depend on props (a function value). Needs manual conversion to sx with computed values or to styled', line);
     }
     if (issues.length) throw new Manual(issues[0], line);
 
@@ -245,10 +245,10 @@ function transformFile(tsm, sf, file, table, rules, apply) {
     const refs = sf.getDescendantsOfKind(K.Identifier).filter((id) => id.getText() === inst.hookName && id !== inst.decl.getNameNode() && isReference(id));
     for (const id of refs) {
       const call = id.getParent();
-      if (!Node.isCallExpression(call) || call.getExpression() !== id) throw new Manual(inst.hookName + ' בשימוש שאינו קריאה (שורה ' + id.getStartLineNumber() + ')', inst.line);
+      if (!Node.isCallExpression(call) || call.getExpression() !== id) throw new Manual(inst.hookName + ' used in a way that is not a call (line ' + id.getStartLineNumber() + ')', inst.line);
       const vd = call.getParentIfKind(K.VariableDeclaration);
       const vs = vd && vd.getVariableStatement();
-      if (!vd || !vs || vs.getDeclarations().length !== 1) throw new Manual('תוצאת ' + inst.hookName + '() אינה מוצבת ב-const classes (שורה ' + call.getStartLineNumber() + ')', inst.line);
+      if (!vd || !vs || vs.getDeclarations().length !== 1) throw new Manual('The result of ' + inst.hookName + '() is not assigned to const classes (line ' + call.getStartLineNumber() + ')', inst.line);
       classesStmts.push(vs);
       const scope = ownerFn(vd) || sf;
       const nameNode = vd.getNameNode();
@@ -256,10 +256,10 @@ function transformFile(tsm, sf, file, table, rules, apply) {
       if (Node.isIdentifier(nameNode)) bindings.push({ local: nameNode.getText(), key: null, decl: nameNode });
       else if (Node.isObjectBindingPattern(nameNode)) {
         nameNode.getElements().forEach((el) => {
-          if (el.getDotDotDotToken()) throw new Manual('...rest מתוך ' + inst.hookName + '()', inst.line);
+          if (el.getDotDotDotToken()) throw new Manual('...rest from ' + inst.hookName + '()', inst.line);
           bindings.push({ local: el.getName(), key: el.getPropertyNameNode() ? el.getPropertyNameNode().getText() : el.getName(), decl: el.getNameNode() });
         });
-      } else throw new Manual('תבנית פירוק לא נתמכת', inst.line);
+      } else throw new Manual('Unsupported destructuring pattern', inst.line);
 
       for (const b of bindings) {
         const ids = scope.getDescendantsOfKind(K.Identifier).filter((x) => x.getText() === b.local && x !== b.decl && isReference(x));
@@ -270,9 +270,9 @@ function transformFile(tsm, sf, file, table, rules, apply) {
             const p = x.getParent();
             if (Node.isPropertyAccessExpression(p) && p.getExpression() === x) { node = p; key = p.getName(); }
             else if (Node.isElementAccessExpression(p) && p.getExpression() === x && Node.isStringLiteral(p.getArgumentExpression())) { node = p; key = p.getArgumentExpression().getLiteralText(); }
-            else throw new Manual(b.local + ' מועבר כאובייקט שלם (שורה ' + x.getStartLineNumber() + ') – לא ניתן להמיר', inst.line);
+            else throw new Manual(b.local + ' is passed as a whole object (line ' + x.getStartLineNumber() + ') – cannot convert', inst.line);
           }
-          if (!inst.keys.some((k) => k.name === key)) throw new Manual(b.local + '.' + key + ' אינו מוגדר ב-makeStyles (שורה ' + x.getStartLineNumber() + ')', inst.line);
+          if (!inst.keys.some((k) => k.name === key)) throw new Manual(b.local + '.' + key + ' is not defined in makeStyles (line ' + x.getStartLineNumber() + ')', inst.line);
           usages.push(classifyUsage(inst, node, key));
         }
       }
@@ -295,7 +295,7 @@ function transformFile(tsm, sf, file, table, rules, apply) {
         return { inst: inst, key: key, kind: 'classes', entry: propName(parent), entryNode: parent, attr: attr, element: attr.getParent().getParent(), line: line };
       }
     }
-    throw new Manual('classes.' + key + ' בשימוש שאינו className={classes.x} או classes={{ slot: classes.x }} (שורה ' + line + ')', inst.line);
+    throw new Manual('classes.' + key + ' used in a form other than className={classes.x} or classes={{ slot: classes.x }} (line ' + line + ')', inst.line);
   }
 
   // =========================================================================
@@ -344,7 +344,7 @@ function transformFile(tsm, sf, file, table, rules, apply) {
       if (BOX_MODULES.indexOf(m) !== -1 && named) { boxLocal = named.getAliasNode() ? named.getAliasNode().getText() : 'Box'; return boxLocal; }
       if (m === '@mui/material/Box' && d.getDefaultImport()) { boxLocal = d.getDefaultImport().getText(); return boxLocal; }
     }
-    if (usedNames.has('Box')) throw new Manual("השם Box כבר תפוס בקובץ – לא ניתן להוסיף Box מ-@mui/material");
+    if (usedNames.has('Box')) throw new Manual('The name Box is already taken in the file – cannot add Box from @mui/material');
     const root = imports.find((d) => d.getModuleSpecifierValue() === '@mui/material' && d.getNamedImports().length && !d.isTypeOnly());
     if (root) {
       const last = root.getNamedImports()[root.getNamedImports().length - 1];
@@ -383,41 +383,41 @@ function transformFile(tsm, sf, file, table, rules, apply) {
       const u = classNameUsages[0];
       plan.removeAttrs.add(u.attr);
       if (!isEmpty(u)) {
-        if (attrNames.indexOf('sx') !== -1) throw new Manual('<' + tag + '> כבר מכיל sx – מיזוג עם className דורש המרה ידנית (שורה ' + line + ')');
+        if (attrNames.indexOf('sx') !== -1) throw new Manual('<' + tag + '> already has sx – merging with className needs manual conversion (line ' + line + ')');
         if (isHtml) {
-          if (attrNames.indexOf('component') !== -1) throw new Manual('<' + tag + ' component=...> – לא ניתן להמיר ל-Box (שורה ' + line + ')');
+          if (attrNames.indexOf('component') !== -1) throw new Manual('<' + tag + ' component=...> – cannot convert to Box (line ' + line + ')');
           plan.rename = { box: ensureBox(), tag: tag };
           plan.details.push({ rule: 'MS.BOX', detail: '<' + tag + ' className={classes.' + u.key + '}> → <Box sx>' });
         } else {
-          if (isV4Import(tag)) throw new Manual('<' + tag + '> מיובא מ-@material-ui (v4) – הרץ קודם את codemod-mui-imports (שורה ' + line + ')');
-          if (!muiComponentOf(tag)) throw new Manual('className={classes.' + u.key + '} על <' + tag + '> שאינו רכיב MUI – לא ידוע אם הוא תומך ב-sx (שורה ' + line + ')');
+          if (isV4Import(tag)) throw new Manual('<' + tag + '> is imported from @material-ui (v4) – run codemod-mui-imports first (line ' + line + ')');
+          if (!muiComponentOf(tag)) throw new Manual('className={classes.' + u.key + '} on <' + tag + '>, which is not an MUI component – unknown whether it supports sx (line ' + line + ')');
           plan.details.push({ rule: 'MS.SX', detail: '<' + tag + ' className={classes.' + u.key + '}> → sx' });
         }
         plan.rootRefs.push(ref(u));
       } else {
-        plan.details.push({ rule: 'MS.EMPTY', detail: 'className={classes.' + u.key + '} (מפתח ריק) הוסר' });
+        plan.details.push({ rule: 'MS.EMPTY', detail: 'className={classes.' + u.key + '} (empty key) removed' });
       }
     }
 
     if (classesUsages.length) {
       const attr = classesUsages[0].attr;
       const entries = attr.getInitializer().getExpression().getProperties();
-      if (entries.length !== classesUsages.length) throw new Manual('classes על <' + tag + '> מכיל ערכים שאינם classes.x מ-makeStyles (שורה ' + line + ')');
-      if (isHtml) throw new Manual('classes על אלמנט HTML <' + tag + '> (שורה ' + line + ')');
-      if (isV4Import(tag)) throw new Manual('<' + tag + '> מיובא מ-@material-ui (v4) – הרץ קודם את codemod-mui-imports (שורה ' + line + ')');
+      if (entries.length !== classesUsages.length) throw new Manual('classes on <' + tag + '> contains values that are not classes.x from makeStyles (line ' + line + ')');
+      if (isHtml) throw new Manual('classes on the HTML element <' + tag + '> (line ' + line + ')');
+      if (isV4Import(tag)) throw new Manual('<' + tag + '> is imported from @material-ui (v4) – run codemod-mui-imports first (line ' + line + ')');
       const comp = muiComponentOf(tag);
       const conf = comp && table.components[comp];
-      if (!conf) throw new Manual('classes על <' + tag + '>: הרכיב ' + (comp || tag) + ' אינו מופיע ב-reference/mui-slots.json (שורה ' + line + ')');
+      if (!conf) throw new Manual('classes on <' + tag + '>: the component ' + (comp || tag) + ' is not in reference/mui-slots.json (line ' + line + ')');
       if (conf.classesProp === false) {
-        const extra = comp === 'Popper' && classesUsages.some((u) => u.entry === 'paper') ? ' – ל-Popper אין slot בשם paper; זו כנראה טעות בקוד המקורי' : '';
-        throw new Manual('ל-' + comp + ' אין prop בשם classes ב-v7' + extra + ' (שורה ' + line + ')');
+        const extra = comp === 'Popper' && classesUsages.some((u) => u.entry === 'paper') ? ' – Popper has no slot named paper; this is probably a mistake in the original code' : '';
+        throw new Manual(comp + ' has no prop named classes in v7' + extra + ' (line ' + line + ')');
       }
-      if (attrNames.indexOf('slotProps') !== -1) throw new Manual('<' + tag + '> כבר מכיל slotProps – מיזוג דורש המרה ידנית (שורה ' + line + ')');
-      if (attrNames.indexOf('sx') !== -1) throw new Manual('<' + tag + '> כבר מכיל sx – מיזוג דורש המרה ידנית (שורה ' + line + ')');
+      if (attrNames.indexOf('slotProps') !== -1) throw new Manual('<' + tag + '> already has slotProps – merging needs manual conversion (line ' + line + ')');
+      if (attrNames.indexOf('sx') !== -1) throw new Manual('<' + tag + '> already has sx – merging needs manual conversion (line ' + line + ')');
       plan.removeAttrs.add(attr);
       for (const u of classesUsages) {
         const entry = u.entry;
-        if (isEmpty(u)) { plan.details.push({ rule: 'MS.EMPTY', detail: comp + ' classes.' + entry + ' (מפתח ריק) הוסר' }); continue; }
+        if (isEmpty(u)) { plan.details.push({ rule: 'MS.EMPTY', detail: comp + ' classes.' + entry + ' (empty key) removed' }); continue; }
         if (entry === 'root' && conf.root) {
           plan.rootRefs.push(ref(u));
           plan.details.push({ rule: 'MS.SX', detail: comp + ' classes.root → sx' });
@@ -426,16 +426,16 @@ function transformFile(tsm, sf, file, table, rules, apply) {
           plan.details.push({ rule: 'MS.SLOT', detail: comp + ' classes.' + entry + ' → slotProps.' + conf.slots[entry] + '.sx' });
         } else if (conf.hooks[entry]) {
           const h = conf.hooks[entry];
-          if (h.manual) throw new Manual(comp + '.' + entry + ': ' + h.manual + ' (שורה ' + line + ')');
+          if (h.manual) throw new Manual(comp + '.' + entry + ': ' + h.manual + ' (line ' + line + ')');
           const sel = { selector: h.selector, ref: ref(u) };
           if (h.host === 'root') plan.rootSelectors.push(sel); else slot(h.host).selectors.push(sel);
           plan.details.push({
-            rule: 'MS.HOOK', detail: comp + ' classes.' + entry + " → '" + h.selector + "' ב-" + (h.host === 'root' ? 'sx' : 'slotProps.' + h.host + '.sx'),
-            review: h.inferred ? 'מיקום ה-selector של ' + comp + '.' + entry + ' נגזר ממבנה ה-DOM – ודא ויזואלית' : null,
+            rule: 'MS.HOOK', detail: comp + ' classes.' + entry + " → '" + h.selector + "' in " + (h.host === 'root' ? 'sx' : 'slotProps.' + h.host + '.sx'),
+            review: h.inferred ? 'The selector position for ' + comp + '.' + entry + ' was derived from the DOM structure – check visually' : null,
           });
         } else {
-          const extra = comp === 'Popper' && entry === 'paper' ? ' – ל-Popper אין slot בשם paper' : '';
-          throw new Manual(comp + ': אין slot או class hook בשם ' + entry + extra + ' (שורה ' + line + ')');
+          const extra = comp === 'Popper' && entry === 'paper' ? ' – Popper has no slot named paper' : '';
+          throw new Manual(comp + ': no slot or class hook named ' + entry + extra + ' (line ' + line + ')');
         }
       }
     }
@@ -558,9 +558,9 @@ function transformFile(tsm, sf, file, table, rules, apply) {
     changes.push({
       file: file, line: inst.line, rule: inst.level === 'theme' ? 'MS.THEME' : 'MS.STATIC',
       detail: inst.hookName + ' → const ' + inst.stylesName + (converted ? ' (' + converted + ' × theme.spacing → sx)' : '') +
-        (inst.emptyKeys.size ? ' | מפתחות ריקים הוסרו: ' + Array.from(inst.emptyKeys).join(', ') : ''),
+        (inst.emptyKeys.size ? ' | empty keys removed: ' + Array.from(inst.emptyKeys).join(', ') : ''),
       confidence: inst.options ? 'review' : 'auto',
-      reason: inst.options ? 'האפשרויות של makeStyles (' + inst.options.getText() + ') הושמטו' : undefined,
+      reason: inst.options ? 'The makeStyles options (' + inst.options.getText() + ') were dropped' : undefined,
     });
   });
 
@@ -592,24 +592,24 @@ function transformFile(tsm, sf, file, table, rules, apply) {
   // =========================================================================
   // 4. validation – on any failure the file is left untouched
   const fail = (why) => {
-    manual.push({ file: file, line: instances[0].line, reason: 'ולידציה נכשלה, הקובץ לא שונה: ' + why });
+    manual.push({ file: file, line: instances[0].line, reason: 'Validation failed, the file was not changed: ' + why });
     return { text: null, changes: [], manual: manual, found: calls.length };
   };
   const check = sf.getProject().createSourceFile('/__validate__' + path.extname(file), out, { overwrite: true });
   try {
     const diags = check.compilerNode.parseDiagnostics || [];
-    if (diags.length) return fail('שגיאת תחביר אחרי ההמרה: ' + tsm.ts.flattenDiagnosticMessageText(diags[0].messageText, ' '));
+    if (diags.length) return fail('Syntax error after the conversion: ' + tsm.ts.flattenDiagnosticMessageText(diags[0].messageText, ' '));
     for (const inst of instances) {
       const v = check.getVariableDeclaration(inst.stylesName);
       const o = v && unwrap(v.getInitializer());
-      if (!o || !Node.isObjectLiteralExpression(o)) return fail('const ' + inst.stylesName + ' לא נמצא');
+      if (!o || !Node.isObjectLiteralExpression(o)) return fail('const ' + inst.stylesName + ' not found');
       const expected = inst.beforeCount - inst.emptyKeys.size;
       const actual = deepKeyCount(o);
-      if (actual !== expected) return fail('מספר מפתחות ה-CSS ב-' + inst.stylesName + ' השתנה (' + expected + ' → ' + actual + ')');
+      if (actual !== expected) return fail('The number of CSS keys in ' + inst.stylesName + ' changed (' + expected + ' → ' + actual + ')');
       const defined = new Set(o.getProperties().map(propName));
       const bad = check.getDescendantsOfKind(K.PropertyAccessExpression).filter((pa) => pa.getExpression().getText() === inst.stylesName && !defined.has(pa.getName()));
-      if (bad.length) return fail(inst.stylesName + '.' + bad[0].getName() + ' אינו מוגדר');
-      if (check.getDescendantsOfKind(K.Identifier).some((id) => id.getText() === inst.hookName)) return fail(inst.hookName + ' עדיין בשימוש');
+      if (bad.length) return fail(inst.stylesName + '.' + bad[0].getName() + ' is not defined');
+      if (check.getDescendantsOfKind(K.Identifier).some((id) => id.getText() === inst.hookName)) return fail(inst.hookName + ' is still used');
     }
   } finally {
     check.getProject().removeSourceFile(check);
@@ -621,7 +621,7 @@ function transformFile(tsm, sf, file, table, rules, apply) {
 
 function conflictMessage(rel, text, err) {
   const line = text.slice(0, err.pos).split('\n').length;
-  return rel + ':' + line + ' – ' + SCRIPT + ' יצר שתי עריכות חופפות באותו מקום (באג בקודמוד). הקובץ לא שונה – יש להמיר אותו ידנית או לדווח על הבאג';
+  return rel + ':' + line + ' – ' + SCRIPT + ' produced two overlapping edits at the same place (a bug in the codemod). The file was not changed – convert it manually or report the bug';
 }
 
 function run(argv, overrides) {
@@ -633,7 +633,7 @@ function run(argv, overrides) {
 
   let tsm;
   try { tsm = require('ts-morph'); } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
   let table;
   let rules;
@@ -641,7 +641,7 @@ function run(argv, overrides) {
     table = deps.table || JSON.parse(require('fs').readFileSync(path.join(REFERENCE_DIR, 'mui-slots.json'), 'utf8'));
     rules = deps.rules || JSON.parse(require('fs').readFileSync(path.join(REFERENCE_DIR, 'sx-rules.json'), 'utf8'));
   } catch (err) {
-    return blocked('לא ניתן לטעון את reference/mui-slots.json / sx-rules.json: ' + err.message);
+    return blocked('Cannot load reference/mui-slots.json / sx-rules.json: ' + err.message);
   }
   let files;
   try { files = listSourceFiles(deps.fs, deps.cwd); } catch (err) {
@@ -659,8 +659,8 @@ function run(argv, overrides) {
   for (const full of files) {
     const rel = toPosix(path.relative(deps.cwd, full));
     let raw;
-    try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked('לא ניתן לקרוא את ' + rel + ': ' + err.message); }
-    if (raw.indexOf('makeStyles') === -1) continue; // סינון ביצועים בלבד – ההחלטה מתקבלת מה-AST
+    try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked('Cannot read ' + rel + ': ' + err.message); }
+    if (raw.indexOf('makeStyles') === -1) continue; // performance filter only – the decision is made from the AST
     const bom = raw.charCodeAt(0) === 0xfeff ? '﻿' : '';
     const text = bom ? raw.slice(1) : raw;
     const sf = project.createSourceFile('/' + rel, text, { overwrite: true });
@@ -671,7 +671,7 @@ function run(argv, overrides) {
       if (!(err instanceof EditConflict)) throw err;
       found++;
       res.blockers.push({ file: rel, message: conflictMessage(rel, text, err) });
-      continue; // הקובץ לא נכתב, והשינויים שלו לא מדווחים
+      continue; // the file was not written, and its changes are not reported
     } finally {
       project.removeSourceFile(sf);
     }
@@ -681,7 +681,7 @@ function run(argv, overrides) {
     if (r.text === null || r.text === text) continue;
     res.filesChanged.push(rel);
     if (!opts.dryRun) {
-      try { deps.fs.writeFileSync(full, bom + r.text, 'utf8'); } catch (err) { return blocked('לא ניתן לכתוב את ' + rel + ': ' + err.message); }
+      try { deps.fs.writeFileSync(full, bom + r.text, 'utf8'); } catch (err) { return blocked('Cannot write ' + rel + ': ' + err.message); }
     }
   }
 
@@ -689,7 +689,7 @@ function run(argv, overrides) {
   if (res.blockers.length) res.result = 'BLOCKED';
   else if (found === 0) res.result = 'NOOP';
   else if (res.manual.length || reviews.length) res.result = 'REVIEW';
-  if (res.filesChanged.length) res.notes.push('הרץ build ובדוק ויזואלית את הרכיבים שהומרו – סדר העדיפויות של sx שונה מזה של JSS');
+  if (res.filesChanged.length) res.notes.push('Run a build and visually check the converted components – sx precedence differs from JSS');
   return res;
 }
 
@@ -700,7 +700,7 @@ function formatText(res) {
   if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
     const byRule = {};
     res.changes.forEach((c) => { byRule[c.rule] = (byRule[c.rule] || 0) + 1; });
-    L.push('🎨 ' + res.filesChanged.length + ' קבצים ' + (res.dryRun ? 'היו משתנים' : 'שונו') +
+    L.push('🎨 ' + res.filesChanged.length + ' files ' + (res.dryRun ? 'would change' : 'changed') +
       (Object.keys(byRule).length ? ' | ' + Object.keys(byRule).map((k) => k + ' ×' + byRule[k]).join(', ') : ''));
     res.changes.filter((c) => c.confidence === 'review').forEach((c) => L.push('🔍 ' + c.file + ':' + c.line + ' – ' + c.reason));
     res.manual.forEach((m) => L.push('✋ ' + m.file + ':' + m.line + ' – ' + m.reason));

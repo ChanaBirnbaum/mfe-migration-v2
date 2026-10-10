@@ -27,7 +27,7 @@ function parseArgs(argv) {
   argv.forEach((a) => {
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   });
   return opts;
 }
@@ -40,7 +40,7 @@ const normalizedSha = (buf) => sha256(Buffer.from(buf.toString('utf8').replace(/
 function walk(fs, root, dir, filter, out) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
-    throw new StateError('לא ניתן לקרוא את ' + (toPosix(path.relative(root, dir)) || '.') + ': ' + err.message);
+    throw new StateError('Cannot read ' + (toPosix(path.relative(root, dir)) || '.') + ': ' + err.message);
   }
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of entries) {
@@ -89,8 +89,8 @@ function scanCallSites(tsm, fs, root, hookFiles) {
     if (hookSet.has(path.resolve(full))) continue;
     const rel = toPosix(path.relative(root, full));
     let text;
-    try { text = fs.readFileSync(full, 'utf8'); } catch (err) { throw new StateError('לא ניתן לקרוא את ' + rel + ': ' + err.message); }
-    if (text.indexOf(HOOK_NAME) === -1) continue; // סינון ביצועים בלבד
+    try { text = fs.readFileSync(full, 'utf8'); } catch (err) { throw new StateError('Cannot read ' + rel + ': ' + err.message); }
+    if (text.indexOf(HOOK_NAME) === -1) continue; // performance filter only
     const sf = project.createSourceFile('/' + rel, text.replace(/^﻿/, ''), { overwrite: true });
     const locals = []; // { name, line }
     const site = (line, ok, reason) => sites.push({ file: rel, line: line, ok: ok, reason: reason || undefined });
@@ -101,9 +101,9 @@ function scanCallSites(tsm, fs, root, hookFiles) {
       if (d.getDefaultImport()) locals.push(d.getDefaultImport().getText());
       d.getNamedImports().forEach((s) => {
         if (s.getName() === 'default') locals.push(s.getAliasNode() ? s.getAliasNode().getText() : s.getName());
-        else site(line, false, 'import { ' + s.getName() + ' } – ה-hook מייצא export default בלבד');
+        else site(line, false, 'import { ' + s.getName() + ' } – the hook only has an export default');
       });
-      if (d.getNamespaceImport()) site(line, false, 'import * as ' + d.getNamespaceImport().getText() + ' – יש לייבא את ה-default');
+      if (d.getNamespaceImport()) site(line, false, 'import * as ' + d.getNamespaceImport().getText() + ' – import the default instead');
     });
     // const useSharedState = require('…/useSharedState')
     sf.getDescendantsOfKind(K.CallExpression).forEach((c) => {
@@ -113,7 +113,7 @@ function scanCallSites(tsm, fs, root, hookFiles) {
       const parent = c.getParent();
       if (Node.isVariableDeclaration(parent) && Node.isIdentifier(parent.getNameNode())) locals.push(parent.getName());
       else if (Node.isPropertyAccessExpression(parent) && parent.getName() === 'default' && Node.isVariableDeclaration(parent.getParent())) locals.push(parent.getParent().getName());
-      else site(c.getStartLineNumber(), false, 'require של useSharedState בצורה לא נתמכת');
+      else site(c.getStartLineNumber(), false, 'require of useSharedState in an unsupported form');
     });
 
     for (const local of locals) {
@@ -123,18 +123,18 @@ function scanCallSites(tsm, fs, root, hookFiles) {
         if (Node.isVariableDeclaration(p) && p.getNameNode() === id) return; // const X = require(...)
         if (Node.isPropertyAccessExpression(p) && p.getNameNode() === id) return;
         const line = id.getStartLineNumber();
-        if (!Node.isCallExpression(p) || p.getExpression() !== id) return site(line, false, local + ' בשימוש שאינו קריאה ישירה');
+        if (!Node.isCallExpression(p) || p.getExpression() !== id) return site(line, false, local + ' used in a way that is not a direct call');
         const args = p.getArguments();
         const problems = [];
-        if (args.some((a) => Node.isSpreadElement(a))) problems.push('ארגומנט spread');
-        else if (args.length < 1 || args.length > 2) problems.push(args.length + ' ארגומנטים (צפוי 1 או 2)');
+        if (args.some((a) => Node.isSpreadElement(a))) problems.push('spread argument');
+        else if (args.length < 1 || args.length > 2) problems.push(args.length + ' arguments (expected 1 or 2)');
         const decl = p.getParent();
         const pattern = Node.isVariableDeclaration(decl) ? decl.getNameNode() : null;
         if (!pattern || !Node.isArrayBindingPattern(pattern)) {
-          problems.push('התוצאה אינה מפורקת ל-[value, setter]');
+          problems.push('the result is not destructured into [value, setter]');
         } else {
           const els = pattern.getElements();
-          if (els.length !== 2 || els.some((e) => Node.isBindingElement(e) && e.getDotDotDotToken())) problems.push('פירוק ל-' + els.length + ' איברים במקום זוג');
+          if (els.length !== 2 || els.some((e) => Node.isBindingElement(e) && e.getDotDotDotToken())) problems.push('destructured into ' + els.length + ' elements instead of a pair');
         }
         site(line, problems.length === 0, problems.join('; '));
       });
@@ -155,9 +155,9 @@ function loadAsset(assetsDir, versionsFile) {
     const assets = JSON.parse(realFs.readFileSync(versionsFile, 'utf8')).assets;
     version = assets && assets[HOOK_NAME];
   } catch (err) {
-    return fail('לא ניתן לטעון את reference/versions.json: ' + err.message);
+    return fail('Cannot load reference/versions.json: ' + err.message);
   }
-  if (typeof version !== 'string' || !version) return fail('reference/versions.json: חסר assets.' + HOOK_NAME + ' (גרסת ה-asset)');
+  if (typeof version !== 'string' || !version) return fail('reference/versions.json: assets.' + HOOK_NAME + ' (the asset version) is missing');
 
   const fileName = HOOK_NAME + '.v' + version + '.js';
   let buf;
@@ -166,23 +166,23 @@ function loadAsset(assetsDir, versionsFile) {
   } catch (err) {
     let present = [];
     try { present = realFs.readdirSync(assetsDir).filter((n) => ASSET_FILE_RE.test(n)).sort(); } catch (_) { /* no dir */ }
-    return fail('גרסת ה-asset הרשומה ב-reference/versions.json היא ' + version + ', אך assets/' + fileName + ' לא קיים (' + err.code + '). ' +
-      (present.length ? 'קיים ב-assets/: ' + present.join(', ') : 'אין ב-assets/ אף קובץ useSharedState.v*.js'));
+    return fail('The asset version listed in reference/versions.json is ' + version + ', but assets/' + fileName + ' does not exist (' + err.code + '). ' +
+      (present.length ? 'Present in assets/: ' + present.join(', ') : 'assets/ has no useSharedState.v*.js file at all'));
   }
 
   const metaName = HOOK_NAME + '.meta.json';
   let meta;
   try { meta = JSON.parse(realFs.readFileSync(path.join(assetsDir, metaName), 'utf8')); } catch (err) {
-    return fail('לא ניתן לטעון את assets/' + metaName + ': ' + err.message);
+    return fail('Cannot load assets/' + metaName + ': ' + err.message);
   }
   if (meta.version !== version) {
-    return fail('assets/' + metaName + ' מתאר את גרסה ' + meta.version + ' אך reference/versions.json רושם ' + version + ' – יש לעדכן את ה-meta');
+    return fail('assets/' + metaName + ' describes version ' + meta.version + ' but reference/versions.json lists ' + version + ' – update the meta');
   }
   // sha256 over LF-normalized content, so autocrlf checkouts on Windows don't trip the check
   const actual = normalizedSha(buf);
   if (meta.sha256 !== actual) {
-    return fail('assets/' + fileName + ' שונה בלי ש-assets/' + metaName + ' עודכן (sha256 ב-meta: ' + (meta.sha256 || '–') + ', בפועל: ' + actual + '). ' +
-      'אם השינוי מכוון – סנכרן אותו למקור ועדכן את sha256 / ref / syncedAt ב-meta; אחרת שחזר את הקובץ');
+    return fail('assets/' + fileName + ' was changed without updating assets/' + metaName + ' (sha256 in meta: ' + (meta.sha256 || '–') + ', actual: ' + actual + '). ' +
+      'If the change is intended – sync it to the source and update sha256 / ref / syncedAt in the meta; otherwise restore the file');
   }
   return { buf: buf, version: version };
 }
@@ -201,7 +201,7 @@ function run(argv, overrides) {
 
   let tsm;
   try { tsm = require('ts-morph'); } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
 
   // asset
@@ -215,7 +215,7 @@ function run(argv, overrides) {
     const p = new tsm.Project({ useInMemoryFileSystem: true, compilerOptions: { allowJs: true } });
     const asf = p.createSourceFile('/asset.js', asset.toString('utf8').replace(/^﻿/, ''));
     if (!asf.getDefaultExportSymbol() && !asf.getExportAssignments().length) {
-      return blocked('ה-asset אינו מכיל export default – אינו תואם ל-API של ' + ver);
+      return blocked('The asset has no export default – it does not match the API of ' + ver);
     }
   }
 
@@ -229,18 +229,18 @@ function run(argv, overrides) {
 
   if (found.length > 1) {
     res.result = 'REVIEW';
-    res.manual.push({ file: null, line: null, reason: 'נמצאו ' + found.length + ' קבצי useSharedState: ' + rels.join(', ') + ' – לא ידוע איזה להחליף' });
+    res.manual.push({ file: null, line: null, reason: 'Found ' + found.length + ' useSharedState files: ' + rels.join(', ') + ' – unknown which one to replace' });
   } else if (found.length === 1) {
     const full = found[0];
     res.hookPath = rels[0];
     let current;
-    try { current = fs.readFileSync(full); } catch (err) { return blocked('לא ניתן לקרוא את ' + rels[0] + ': ' + err.message); }
+    try { current = fs.readFileSync(full); } catch (err) { return blocked('Cannot read ' + rels[0] + ': ' + err.message); }
     res.previousSha = sha256(current);
     if (normalizedSha(current) === normalizedSha(asset)) {
-      res.notes.push(rels[0] + ' כבר בגרסה ' + ver);
+      res.notes.push(rels[0] + ' is already at version ' + ver);
     } else if (!/\.jsx?$/.test(full)) {
       res.result = 'REVIEW';
-      res.manual.push({ file: rels[0], line: null, reason: 'הקובץ הקיים הוא TypeScript וה-asset הוא JavaScript – החלפה ידנית (או הוספת טיפוסים) נדרשת' });
+      res.manual.push({ file: rels[0], line: null, reason: 'The existing file is TypeScript and the asset is JavaScript – manual replacement (or adding types) is needed' });
     } else {
       const backupRel = toPosix(path.join(BACKUP_DIR, rels[0] + '.' + res.previousSha.slice(0, 12) + '.bak'));
       res.backup = backupRel;
@@ -251,11 +251,11 @@ function run(argv, overrides) {
           if (!fs.existsSync(backupFull)) fs.writeFileSync(backupFull, current);
           fs.writeFileSync(full, asset);
         } catch (err) {
-          return blocked('לא ניתן להחליף את ' + rels[0] + ': ' + err.message);
+          return blocked('Cannot replace ' + rels[0] + ': ' + err.message);
         }
       }
       res.replaced = true;
-      res.changes.push({ file: rels[0], rule: 'SHARED_STATE.REPLACE', confidence: 'auto', detail: 'הוחלף ב-' + ver + ', גיבוי ב-' + backupRel });
+      res.changes.push({ file: rels[0], rule: 'SHARED_STATE.REPLACE', confidence: 'auto', detail: 'replaced with ' + ver + ', backup in ' + backupRel });
     }
   } else {
     res.hookPath = DEFAULT_TARGET;
@@ -265,11 +265,11 @@ function run(argv, overrides) {
         fs.mkdirSync(path.dirname(full), { recursive: true });
         fs.writeFileSync(full, asset);
       } catch (err) {
-        return blocked('לא ניתן ליצור את ' + DEFAULT_TARGET + ': ' + err.message);
+        return blocked('Cannot create ' + DEFAULT_TARGET + ': ' + err.message);
       }
     }
     res.created = true;
-    res.changes.push({ file: DEFAULT_TARGET, rule: 'SHARED_STATE.CREATE', confidence: 'auto', detail: 'נוצר מ-asset ' + ver });
+    res.changes.push({ file: DEFAULT_TARGET, rule: 'SHARED_STATE.CREATE', confidence: 'auto', detail: 'created from asset ' + ver });
   }
 
   // call-sites
@@ -292,11 +292,11 @@ function formatText(res) {
   const L = [SCRIPT + (res.dryRun ? ' [dry-run]' : '')];
   if (res.result === 'BLOCKED') res.blockers.forEach((b) => L.push('⛔ ' + b.message));
   else {
-    if (res.created) L.push('🆕 ' + res.hookPath + ' ' + (res.dryRun ? 'היה נוצר' : 'נוצר') + ' (asset ' + res.assetVersion + ' ' + res.assetSha.slice(0, 12) + ')');
-    else if (res.replaced) L.push('🔁 ' + res.hookPath + ' ' + (res.dryRun ? 'היה מוחלף' : 'הוחלף') + ' (' + res.previousSha.slice(0, 12) + ' → ' + res.assetSha.slice(0, 12) + '), גיבוי: ' + res.backup);
-    else if (res.hookPath && res.previousSha) L.push('✓ ' + res.hookPath + ' זהה לגרסה ' + res.assetVersion);
+    if (res.created) L.push('🆕 ' + res.hookPath + ' ' + (res.dryRun ? 'would be created' : 'created') + ' (asset ' + res.assetVersion + ' ' + res.assetSha.slice(0, 12) + ')');
+    else if (res.replaced) L.push('🔁 ' + res.hookPath + ' ' + (res.dryRun ? 'would be replaced' : 'replaced') + ' (' + res.previousSha.slice(0, 12) + ' → ' + res.assetSha.slice(0, 12) + '), backup: ' + res.backup);
+    else if (res.hookPath && res.previousSha) L.push('✓ ' + res.hookPath + ' is identical to version ' + res.assetVersion);
     const ok = res.callSites.filter((s) => s.ok).length;
-    L.push('📞 ' + res.callSites.length + ' call-sites' + (res.callSites.length ? ' (' + ok + ' תקינים)' : ''));
+    L.push('📞 ' + res.callSites.length + ' call-sites' + (res.callSites.length ? ' (' + ok + ' valid)' : ''));
     res.manual.forEach((m) => L.push('✋ ' + (m.file ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason));
     res.notes.forEach((n) => L.push('ℹ ' + n));
   }

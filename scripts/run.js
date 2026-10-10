@@ -22,7 +22,8 @@ const DIAG_PRINT_LIMIT = 40;
 const STEPS = [
   { id: 'preflight' },
   { id: 'scan' },
-  { id: 'branch', approval: 'branch.target' },
+  // approval: which branch to branch off (default: the current one). branch.target (default digital_V2) is optional
+  { id: 'branch', approval: 'branch.source' },
   { id: 'package-json' },
   { id: 'codemod-mui-imports' },
   { id: 'codemod-react18' },
@@ -47,10 +48,10 @@ const SAVE_OUTPUT = (id) => id !== 'build';
 function parseArgs(argv) {
   const opts = { resume: false, answers: {}, from: null, only: null, dryRun: false, yes: false, json: false, errors: [] };
   const stepArg = (flag, v) => {
-    if (!v) { opts.errors.push(flag + ' דורש שם שלב'); return null; }
+    if (!v) { opts.errors.push(flag + ' requires a step name'); return null; }
     if (STEP_IDS.indexOf(v) === -1) {
       const close = STEP_IDS.filter((id) => id.indexOf(v) !== -1);
-      opts.errors.push('שלב לא מוכר: "' + v + '"' + (close.length ? ' – התכוונת ל-' + close.join(' / ') + '?' : '') + '. שלבים: ' + STEP_IDS.join(', '));
+      opts.errors.push('Unknown step: "' + v + '"' + (close.length ? ' – did you mean ' + close.join(' / ') + '?' : '') + '. Steps: ' + STEP_IDS.join(', '));
       return null;
     }
     return v;
@@ -64,13 +65,13 @@ function parseArgs(argv) {
     else if (a === '--answer') {
       const v = argv[++i] || '';
       const eq = v.indexOf('=');
-      if (eq <= 0) opts.errors.push('‎--answer צריך להיות בצורה key=value (התקבל "' + v + '")');
+      if (eq <= 0) opts.errors.push('--answer must be in the form key=value (got "' + v + '")');
       else opts.answers[v.slice(0, eq)] = v.slice(eq + 1);
     } else if (a === '--from') opts.from = stepArg('--from', argv[++i]);
     else if (a === '--only') opts.only = stepArg('--only', argv[++i]);
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   }
-  if (opts.from && opts.only) opts.errors.push('לא ניתן לשלב --from ו---only');
+  if (opts.from && opts.only) opts.errors.push('--from and --only cannot be combined');
   return opts;
 }
 
@@ -122,9 +123,9 @@ async function run(argv, overrides) {
   // run from inside the skill → .migration/ and every edit would land in the skill itself. Stop before writing anything.
   const rel = path.relative(path.resolve(SKILL_ROOT), path.resolve(root));
   if (!rel || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
-    say('⏸ run.js הורץ מתוך תיקיית הסקיל (' + root + '). יש להריץ אותו משורש הריפו של השירות המוסב:');
-    say('   cd <שורש השירות> && ' + RUN_CMD);
-    return stop('PAUSE', { kind: 'skill-dir', message: 'cwd נמצא בתוך תיקיית הסקיל – לא נכתב דבר' });
+    say('⏸ run.js was run from inside the skill folder (' + root + '). Run it from the root of the service repo being migrated:');
+    say('   cd <service root> && ' + RUN_CMD);
+    return stop('PAUSE', { kind: 'skill-dir', message: 'cwd is inside the skill folder – nothing was written' });
   }
 
   // ---- state ----
@@ -135,20 +136,20 @@ async function run(argv, overrides) {
   try { service = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).name || null; } catch (_) { service = null; }
 
   if (opts.resume && !state) {
-    say('⏸ אין ריצה להמשיך: ' + STATE_FILE + ' לא נמצא בתיקייה ' + root);
+    say('⏸ No run to resume: ' + STATE_FILE + ' not found in ' + root);
     out.next = RUN_CMD;
-    return stop('PAUSE', { kind: 'no-state', message: STATE_FILE + ' לא נמצא – הרץ בלי --resume כדי להתחיל' });
+    return stop('PAUSE', { kind: 'no-state', message: STATE_FILE + ' not found – run without --resume to start' });
   }
   if (state && service && state.service && state.service !== service && !opts.dryRun) {
-    say('⏸ ' + STATE_FILE + ' שייך לשירות "' + state.service + '" ולא ל-"' + service + '" – לא ממשיכים');
-    return stop('PAUSE', { kind: 'other-service', message: 'state.json שייך לשירות ' + state.service });
+    say('⏸ ' + STATE_FILE + ' belongs to service "' + state.service + '", not "' + service + '" – not continuing');
+    return stop('PAUSE', { kind: 'other-service', message: 'state.json belongs to service ' + state.service });
   }
   const unfinished = state && state.current;
   if (unfinished && !opts.resume && !opts.from && !opts.only && !opts.dryRun) {
-    say('⏸ קיימת ריצה שלא הסתיימה (עצרה ב-' + state.current + ').');
+    say('⏸ A previous run did not finish (stopped at ' + state.current + ').');
     out.next = RUN_CMD + ' --resume';
-    say('להמשך: ' + out.next + '   |   להתחלה מחדש: ' + RUN_CMD + ' --from preflight');
-    return stop('PAUSE', { kind: 'unfinished', message: 'ריצה קודמת עצרה ב-' + state.current });
+    say('Next: ' + out.next + '   |   Start over: ' + RUN_CMD + ' --from preflight');
+    return stop('PAUSE', { kind: 'unfinished', message: 'previous run stopped at ' + state.current });
   }
   const fresh = !state || (!opts.resume && !opts.only && !(opts.from && unfinished));
   if (fresh) {
@@ -176,11 +177,11 @@ async function run(argv, overrides) {
   else if (opts.resume) startIdx = state.current ? STEP_IDS.indexOf(state.current) : STEP_IDS.length;
   const endIdx = opts.only ? startIdx + 1 : STEPS.length;
   if (opts.resume && !state.current) {
-    say('✓ הצינור כבר הושלם (' + (state.finishedAt || '') + '). להרצה מחדש: ' + RUN_CMD + ' --from <שלב>');
+    say('✓ The pipeline is already complete (' + (state.finishedAt || '') + '). To run again: ' + RUN_CMD + ' --from <step>');
     out.state = state;
     return stop('OK', null);
   }
-  if (startIdx > 0 && !opts.only) say('↻ ממשיך מ-' + STEP_IDS[startIdx] + ' (' + (startIdx + 1) + '/' + STEPS.length + ')');
+  if (startIdx > 0 && !opts.only) say('↻ Resuming from ' + STEP_IDS[startIdx] + ' (' + (startIdx + 1) + '/' + STEPS.length + ')');
 
   const total = STEPS.length;
   const label = (i, id) => '[' + String(i + 1).padStart(2) + '/' + total + '] ' + id.padEnd(22);
@@ -194,23 +195,37 @@ async function run(argv, overrides) {
     if (opts.dryRun) args.push('--dry-run');
     if (!opts.only) state.current = step.id;
 
-    // ---- approval: branch name ----
-    if (step.approval === 'branch.target') {
-      const answer = state.answers['branch.target'];
-      if (answer) args.push('--target', answer);
+    // ---- approval: source branch (target name is optional, defaults to digital_V2) ----
+    if (step.approval === 'branch.source') {
+      const targetAnswer = state.answers['branch.target'];
+      const sourceAnswer = state.answers['branch.source'];
+      if (targetAnswer) args.push('--target', targetAnswer);
+      if (sourceAnswer) args.push('--source', sourceAnswer);
       else if (!opts.yes && !opts.dryRun) {
-        // default suggestion = the name branch.js would derive
-        const probe = await runStep(script, ['--json', '--dry-run']);
-        let suggestion = null;
-        try { suggestion = JSON.parse(probe.stdout).targetBranch || null; } catch (_) { suggestion = null; }
-        save();
-        say(label(i, step.id) + '⏸ PAUSE     נדרש אישור שם בראנץ\'' + (suggestion ? ' (הצעה: ' + suggestion + ')' : ''));
-        out.steps.push({ id: step.id, result: 'PAUSE', reason: 'approval' });
-        out.next = RUN_CMD + ' --resume --answer branch.target=' + (suggestion || '<שם>');
-        say('');
-        say('להמשך: ' + out.next);
-        out.state = state;
-        return stop('PAUSE', { kind: 'approval', step: step.id, key: 'branch.target', suggestion: suggestion });
+        // מה branch.js יעשה בפועל: מקור (ברירת מחדל: הבראנץ' הנוכחי) → יעד
+        const probe = await runStep(script, ['--json', '--dry-run'].concat(targetAnswer ? ['--target', targetAnswer] : []));
+        let plan = null;
+        try { plan = JSON.parse(probe.stdout); } catch (_) { plan = null; }
+        // NOOP = כבר עומדים על היעד; אין מה לאשר – השלב ירוץ (וישלים תג חסר אם צריך)
+        if (!(plan && plan.result === 'NOOP')) {
+          const source = (plan && plan.sourceBranch) || null;
+          const target = (plan && plan.targetBranch) || targetAnswer || null;
+          save();
+          const current = source && plan.previousBranch === source ? ' (current branch)' : '';
+          say(label(i, step.id) + '⏸ PAUSE     Approval needed: create ' + (target || '<target>') + ' from ' + (source || '<source>') + current);
+          say('   branch from: ' + (source || '?') + '   →   new branch: ' + (target || '?'));
+          if (plan && plan.blockers && plan.blockers.length) {
+            say('   The pre-check found blockers to resolve before approving:');
+            printBlocked(say, plan);
+          }
+          out.steps.push(stepEntry(step.id, 'PAUSE', null, plan, { reason: 'approval' }));
+          out.next = RUN_CMD + ' --resume --answer branch.source=' + (source || '<source>') + (targetAnswer ? ' --answer branch.target=' + targetAnswer : '');
+          say('');
+          say('Next: ' + out.next);
+          say('Different source: --answer branch.source=<name>   |   different target name: --answer branch.target=<name>');
+          out.state = state;
+          return stop('PAUSE', { kind: 'approval', step: step.id, key: 'branch.source', source: source, target: target, suggestion: source });
+        }
       }
     }
 
@@ -223,14 +238,14 @@ async function run(argv, overrides) {
 
     if (!res) {
       const tail = (r.stderr || r.stdout || '').split(/\r?\n/).filter(Boolean).slice(-15);
-      say(label(i, step.id) + '💥 FAILED    ' + (r.exitCode === 0 ? 'פלט שאינו JSON' : 'exit ' + r.exitCode) + '  ' + fmtDuration(ms));
+      say(label(i, step.id) + '💥 FAILED    ' + (r.exitCode === 0 ? 'output is not JSON' : 'exit ' + r.exitCode) + '  ' + fmtDuration(ms));
       tail.forEach((l) => say('   | ' + l));
       state.results[step.id] = 'FAILED';
       save();
-      out.steps.push({ id: step.id, result: 'FAILED', durationMs: ms });
+      out.steps.push(stepEntry(step.id, 'FAILED', ms, null));
       out.next = RUN_CMD + ' --resume';
       say('');
-      say('הסקריפט ' + script + ' קרס. לאחר בירור – להמשך: ' + out.next);
+      say('Script ' + script + ' crashed. After investigating, continue with: ' + out.next);
       out.state = state;
       return stop('FAILED', { kind: 'crash', step: step.id, exitCode: r.exitCode, tail: tail });
     }
@@ -239,11 +254,12 @@ async function run(argv, overrides) {
       try { fs.writeFileSync(path.join(root, '.migration', step.id + '.json'), JSON.stringify(res, null, 2) + '\n', 'utf8'); } catch (_) { /* report only */ }
     }
     state.results[step.id] = res.result;
-    out.steps.push({ id: step.id, result: res.result, durationMs: ms });
+    out.steps.push(stepEntry(step.id, res.result, ms, res));
 
-    // ---- dry-run: simulate everything, never pause ----
+    // ---- dry-run: simulate everything, never pause – but show why ----
     if (opts.dryRun) {
       say(label(i, step.id) + (SYMBOL[res.result] || '?') + ' ' + res.result.padEnd(10) + fmtDuration(ms));
+      printBlocked(say, res);
       if (res.result === 'BLOCKED') worstDry = 'BLOCKED';
       else if (res.result === 'REVIEW' && worstDry !== 'BLOCKED') worstDry = 'REVIEW';
       continue;
@@ -259,25 +275,25 @@ async function run(argv, overrides) {
       // סבבים רצופים בסוף ההיסטוריה שבהם מספר השגיאות לא ירד
       for (let k = w.history.length - 1; k > 0 && w.history[k] >= w.history[k - 1]; k--) stalled++;
       save();
-      const trend = prev === null ? '' : ' (קודם: ' + prev + ')';
+      const trend = prev === null ? '' : ' (previous: ' + prev + ')';
       printDiagnostics(say, res);
       out.state = state;
       if (w.history.length >= BUILD_MAX_ROUNDS || stalled >= BUILD_NO_PROGRESS_ROUNDS) {
         const why = stalled >= BUILD_NO_PROGRESS_ROUNDS
-          ? 'אין התקדמות: מספר השגיאות לא ירד ב-' + stalled + ' סבבים (' + w.history.join(' → ') + ')'
-          : 'הגעה למקסימום ' + BUILD_MAX_ROUNDS + ' סבבי תיקון (' + w.history.join(' → ') + ')';
+          ? 'No progress: the error count did not go down in ' + stalled + ' rounds (' + w.history.join(' → ') + ')'
+          : 'Reached the maximum of ' + BUILD_MAX_ROUNDS + ' fix rounds (' + w.history.join(' → ') + ')';
         say(label(i, step.id) + '⏸ PAUSE     ' + why);
-        state.buildWindow = { history: [] }; // --resume אחרי החלטה מתחיל חלון חדש
+        state.buildWindow = { history: [] }; // --resume after a decision starts a new window
         save();
         out.next = RUN_CMD + ' --resume';
         say('');
-        say('נדרשת החלטה אנושית לפני המשך התיקונים. להמשך סבבים: ' + out.next);
+        say('A human decision is needed before continuing the fixes. To run more rounds: ' + out.next);
         return stop('PAUSE', { kind: 'build-stalled', step: step.id, history: w.history, reason: why });
       }
-      say(label(i, step.id) + '🔧 PAUSE_FOR_FIX ' + res.errorCount + ' שגיאות' + trend + ' | סבב ' + w.history.length + '/' + BUILD_MAX_ROUNDS + '  ' + fmtDuration(ms));
+      say(label(i, step.id) + '🔧 PAUSE_FOR_FIX ' + res.errorCount + ' errors' + trend + ' | round ' + w.history.length + '/' + BUILD_MAX_ROUNDS + '  ' + fmtDuration(ms));
       out.next = RUN_CMD + ' --resume';
       say('');
-      say('תקן את השגיאות ואז: ' + out.next);
+      say('Fix the errors, then: ' + out.next);
       return stop('PAUSE_FOR_FIX', { kind: 'build', step: step.id, errorCount: res.errorCount, history: w.history.slice() });
     }
 
@@ -297,7 +313,7 @@ async function run(argv, overrides) {
       printReview(say, res);
       out.next = RUN_CMD + ' --resume' + answerHint();
       say('');
-      say('לאחר הבדיקה – להמשך: ' + (state.current ? RUN_CMD + ' --resume' : 'סיום (השלב האחרון)'));
+      say('After review, continue with: ' + (state.current ? RUN_CMD + ' --resume' : 'done (this was the last step)'));
       out.state = state;
       return stop('PAUSE', { kind: 'review', step: step.id, manual: res.manual, notes: res.notes });
     }
@@ -308,7 +324,7 @@ async function run(argv, overrides) {
     printBlocked(say, res);
     out.next = RUN_CMD + ' --resume';
     say('');
-    say('לאחר הטיפול – להמשך (השלב ירוץ שוב): ' + out.next);
+    say('After fixing, continue with (the step runs again): ' + out.next);
     out.state = state;
     return stop('PAUSE', { kind: 'blocked', step: step.id, blockers: res.blockers });
   }
@@ -316,7 +332,7 @@ async function run(argv, overrides) {
   out.state = state;
   if (opts.dryRun) {
     say('');
-    say('[dry-run] לא נכתב דבר. תוצאות השלבים הן הדמיה – שלבים מאוחרים תלויים בשינויים של הקודמים');
+    say('[dry-run] Nothing was written. Step results are simulated – later steps depend on the changes of earlier ones');
     return stop(worstDry === 'OK' ? 'OK' : worstDry, null);
   }
   if (!opts.only) {
@@ -324,7 +340,7 @@ async function run(argv, overrides) {
     state.finishedAt = deps.now().toISOString();
     save();
     say('');
-    say('✅ הצינור הושלם. הדוח: MIGRATION-V2-REPORT.md (לא בוצע לו commit)');
+    say('✅ The pipeline is complete. Report: MIGRATION-V2-REPORT.md (not committed)');
   }
   return stop('OK', null);
 }
@@ -338,10 +354,20 @@ function ensureGitExclude(deps, root, out) {
     if (text.split(/\r?\n/).some((l) => l.trim() === '.migration/' || l.trim() === '.migration')) return;
     deps.fs.mkdirSync(path.dirname(file), { recursive: true });
     deps.fs.writeFileSync(file, text + (text && !text.endsWith('\n') ? '\n' : '') + '# mfe-migration-v2 working files\n.migration/\n', 'utf8');
-    out.notes.push('.migration/ נוסף ל-.git/info/exclude (מקומי, לא נכנס ל-commit)');
+    out.notes.push('.migration/ was added to .git/info/exclude (local, never committed)');
   } catch (_) {
     // not a git repo – preflight will report it
   }
+}
+
+// One entry in out.steps: the step's reasons travel with its result, in every mode (incl. --dry-run / --json)
+function stepEntry(id, result, ms, res, extra) {
+  const e = { id: id, result: result };
+  if (ms !== null) e.durationMs = ms;
+  e.blockers = (res && res.blockers) || [];
+  e.manual = (res && res.manual) || [];
+  e.notes = (res && res.notes) || [];
+  return Object.assign(e, extra || {});
 }
 
 function printReview(say, res) {
@@ -360,7 +386,7 @@ function printBlocked(say, res) {
     (b.files || []).slice(0, 30).forEach((f) => say('       ' + f));
     if (b.tree) b.tree.split(/\r?\n/).forEach((l) => say('     | ' + l));
     if (b.raw) b.raw.split(/\r?\n/).slice(-15).forEach((l) => say('     | ' + l));
-    if (b.suggestion) say('     הצעה: ' + b.suggestion);
+    if (b.suggestion) say('     suggestion: ' + b.suggestion);
     if (b.code) b.code.split('\n').forEach((l) => say('     | ' + l));
   });
   (res.manual || []).forEach((m) => say('  ✋ ' + (m.file ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason));
@@ -369,10 +395,10 @@ function printBlocked(say, res) {
 function printDiagnostics(say, res) {
   const diags = (res.diagnostics || []).filter((d) => d.severity === 'error');
   diags.slice(0, DIAG_PRINT_LIMIT).forEach((d) => {
-    say('  ⛔ [' + d.source + (d.code ? ' ' + d.code : '') + '] ' + (d.file ? d.file + (d.line ? ':' + d.line + (d.column ? ':' + d.column : '') : '') : '(ללא קובץ)') + ' – ' + d.message);
+    say('  ⛔ [' + d.source + (d.code ? ' ' + d.code : '') + '] ' + (d.file ? d.file + (d.line ? ':' + d.line + (d.column ? ':' + d.column : '') : '') : '(no file)') + ' – ' + d.message);
   });
-  if (diags.length > DIAG_PRINT_LIMIT) say('  … ועוד ' + (diags.length - DIAG_PRINT_LIMIT) + ' – הרשימה המלאה (כולל raw) ב-.migration/build-' + res.run + '.json');
-  else if (res.run) say('  פירוט מלא (כולל raw): .migration/build-' + res.run + '.json');
+  if (diags.length > DIAG_PRINT_LIMIT) say('  … and ' + (diags.length - DIAG_PRINT_LIMIT) + ' more – the full list (including raw) is in .migration/build-' + res.run + '.json');
+  else if (res.run) say('  Full details (including raw): .migration/build-' + res.run + '.json');
 }
 
 function formatSummary(out) {

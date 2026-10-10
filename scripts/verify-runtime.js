@@ -16,8 +16,8 @@ const SUCCESS_RE = /compiled successfully|webpack(?: \S+)? compiled(?! with \d+ 
 const FAILED_RE = /compiled with (\d+) errors?|Failed to compile/i;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
-const HOST_NOTE = 'בדיקה זו רצה בפיתוח עצמאי, שבו React 18 מותקן מקומית. תחת Host ישן השירות מקבל React 17 מה-Host ' +
-  '(import: false ב-buildSharedGen1) – בדיקה זו אינה מעידה על ההתנהגות תחת Host.';
+const HOST_NOTE = 'This check runs in standalone development, where React 18 is installed locally. Under an old Host the service gets React 17 from the Host ' +
+  '(import: false in buildSharedGen1) – this check says nothing about the behavior under a Host.';
 
 function parseDuration(v) {
   const m = /^(\d+(?:\.\d+)?)(m|min|s|ms)?$/.exec(String(v || '').trim());
@@ -36,14 +36,14 @@ function parseArgs(argv) {
     else if (a === '--json') opts.json = true;
     else if (a === '--port' || a.startsWith('--port=')) {
       const v = a === '--port' ? argv[++i] : a.slice('--port='.length);
-      if (!/^\d+$/.test(String(v)) || Number(v) < 1 || Number(v) > 65535) opts.errors.push('‎--port לא תקין: "' + v + '"');
+      if (!/^\d+$/.test(String(v)) || Number(v) < 1 || Number(v) > 65535) opts.errors.push('Invalid --port: "' + v + '"');
       else opts.port = Number(v);
     } else if (a === '--timeout' || a.startsWith('--timeout=')) {
       const v = a === '--timeout' ? argv[++i] : a.slice('--timeout='.length);
       const ms = parseDuration(v);
-      if (ms === null) opts.errors.push('‎--timeout לא תקין: "' + v + '"');
+      if (ms === null) opts.errors.push('Invalid --timeout: "' + v + '"');
       else opts.startupMs = ms;
-    } else opts.errors.push('פרמטר לא מוכר: ' + a);
+    } else opts.errors.push('Unknown argument: ' + a);
   }
   return opts;
 }
@@ -157,17 +157,17 @@ async function run(argv, overrides) {
 
   let tsm;
   try { tsm = require('ts-morph'); } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
   let cfgText;
   try { cfgText = fs.readFileSync(path.join(root, 'webpack.config.js'), 'utf8'); } catch (err) {
-    return blocked('webpack.config.js לא נמצא / לא קריא: ' + err.message);
+    return blocked('webpack.config.js not found / not readable: ' + err.message);
   }
   const cfg = readConfig(tsm, cfgText);
   res.port = opts.port || cfg.port || DEFAULT_PORT;
   if (!opts.port && !cfg.port) {
-    res.notes.push(cfg.portExpression ? 'devServer.port אינו ערך קבוע (' + cfg.portExpression + ') – נעשה שימוש ב-' + DEFAULT_PORT + '. ניתן לעקוף עם --port'
-      : 'devServer.port לא הוגדר – נעשה שימוש בברירת המחדל ' + DEFAULT_PORT);
+    res.notes.push(cfg.portExpression ? 'devServer.port is not a constant value (' + cfg.portExpression + ') – using ' + DEFAULT_PORT + '. Override with --port'
+      : 'devServer.port is not set – using the default ' + DEFAULT_PORT);
   }
   const remoteEntryName = cfg.filename || 'remoteEntry.js';
   const expectRemoteEntry = cfg.exposes;
@@ -183,17 +183,17 @@ async function run(argv, overrides) {
   res.hasReactDomClient = reactDomPkg ? fs.existsSync(path.join(path.dirname(reactDomPkg), 'client.js')) : false;
 
   const cli = resolveFile('webpack-cli/bin/cli.js');
-  if (!cli) return blocked('webpack-cli אינו מותקן ב-node_modules – הרץ קודם את install.js');
+  if (!cli) return blocked('webpack-cli is not installed in node_modules – run install.js first');
   // node <webpack-cli> ישירות: בלי npm/shell, כך שעצירת התהליך עוצרת את השרת עצמו
   const args = [cli, 'serve', '--mode', 'development', '--env', 'sviva=local', '--no-open', '--port', String(res.port)];
   res.command = 'webpack serve --mode development --env sviva=local --no-open --port ' + res.port;
   if (opts.dryRun) {
-    res.notes.push('[dry-run] היה מורץ: ' + res.command + ', ואז GET /' + remoteEntryName + ' ו-GET /');
+    res.notes.push('[dry-run] would run: ' + res.command + ', then GET /' + remoteEntryName + ' and GET /');
     return res;
   }
 
   if (await deps.portInUse(res.port)) {
-    return blocked('הפורט ' + res.port + ' כבר תפוס – שרת אחר רץ (אולי dev server קודם). עצור אותו או העבר --port');
+    return blocked('Port ' + res.port + ' is already in use – another server is running (maybe a previous dev server). Stop it or pass --port');
   }
 
   let child = null;
@@ -229,17 +229,17 @@ async function run(argv, overrides) {
     res.startupMs = deps.now() - started;
     const tail = outcome.output.replace(ANSI_RE, '').split(/\r?\n/).slice(-40).join('\n');
 
-    if (outcome.spawnError) return blocked('לא ניתן להפעיל את השרת: ' + outcome.spawnError.message);
-    if (outcome.timedOut) return blocked('השרת לא דיווח על קומפילציה מוצלחת תוך ' + Math.round(opts.startupMs / 60000) + ' דקות', { raw: tail });
-    if (outcome.exited) return blocked('השרת נסגר לפני שסיים לקמפל (exit ' + outcome.code + ')', { raw: tail });
+    if (outcome.spawnError) return blocked('Cannot start the server: ' + outcome.spawnError.message);
+    if (outcome.timedOut) return blocked('The server did not report a successful compilation within ' + Math.round(opts.startupMs / 60000) + ' minutes', { raw: tail });
+    if (outcome.exited) return blocked('The server exited before it finished compiling (exit ' + outcome.code + ')', { raw: tail });
     if (outcome.failed) {
       try { res.diagnostics = require('./build').parseOutput(outcome.output, root).diagnostics; } catch (_) { res.diagnostics = []; }
-      return blocked('הקומפילציה ב-dev server נכשלה (' + res.diagnostics.filter((d) => d.severity === 'error').length + ' שגיאות) – הרץ build.js לפירוט', { raw: tail });
+      return blocked('Compilation in the dev server failed (' + res.diagnostics.filter((d) => d.severity === 'error').length + ' errors) – run build.js for details', { raw: tail });
     }
     // dev server שבחר פורט אחר (port: 'auto') מדווח עליו בפלט
     const actual = /Loopback:\s*https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):(\d+)/.exec(outcome.output.replace(ANSI_RE, ''));
     if (actual && Number(actual[1]) !== res.port) {
-      res.notes.push('השרת עלה על פורט ' + actual[1] + ' ולא ' + res.port);
+      res.notes.push('The server started on port ' + actual[1] + ', not ' + res.port);
       res.port = Number(actual[1]);
     }
 
@@ -251,12 +251,12 @@ async function run(argv, overrides) {
     res.rootOk = page.status === 200;
 
     if (!res.remoteEntryOk) {
-      const why = entry.status === null ? entry.error : 'HTTP ' + entry.status + (entry.status === 200 ? ' עם תוכן ריק' : '');
-      if (expectRemoteEntry) return blocked(remoteEntryName + ' לא נטען (' + why + ') מ-' + res.remoteEntryUrl + ' – בדוק את ModuleFederationPlugin ואת output.publicPath של sviva=local');
-      res.notes.push(remoteEntryName + ' לא נטען (' + why + ') – אין exposes בקונפיג, לכן זה צפוי (host / standalone)');
+      const why = entry.status === null ? entry.error : 'HTTP ' + entry.status + (entry.status === 200 ? ' with empty content' : '');
+      if (expectRemoteEntry) return blocked(remoteEntryName + ' did not load (' + why + ') from ' + res.remoteEntryUrl + ' – check ModuleFederationPlugin and output.publicPath for sviva=local');
+      res.notes.push(remoteEntryName + ' did not load (' + why + ') – the config has no exposes, so this is expected (host / standalone)');
       res.remoteEntryOk = null;
     }
-    if (!res.rootOk) review('GET / החזיר ' + (page.status === null ? page.error : 'HTTP ' + page.status) + ' – צפוי 200 (HtmlWebPackPlugin / index.html)');
+    if (!res.rootOk) review('GET / returned ' + (page.status === null ? page.error : 'HTTP ' + page.status) + ' – expected 200 (HtmlWebPackPlugin / index.html)');
   } finally {
     // סגירת השרת תמיד – גם בכשל
     killTree(child, deps.platform, deps.cp);
@@ -268,13 +268,13 @@ async function run(argv, overrides) {
 
   // React
   const major = res.reactVersion ? Number(res.reactVersion.split('.')[0]) : null;
-  if (!res.reactVersion) review('react לא נמצא ב-node_modules');
-  else if (major !== 18) review('React ' + res.reactVersion + ' ולא 18 – ראה ' + COEXISTENCE_DOC);
-  else if (!res.hasReactDomClient) review('react-dom/client אינו זמין (react-dom ' + (res.reactDomVersion || '?') + ') – ראה ' + COEXISTENCE_DOC);
+  if (!res.reactVersion) review('react was not found in node_modules');
+  else if (major !== 18) review('React ' + res.reactVersion + ', not 18 – see ' + COEXISTENCE_DOC);
+  else if (!res.hasReactDomClient) review('react-dom/client is not available (react-dom ' + (res.reactDomVersion || '?') + ') – see ' + COEXISTENCE_DOC);
   if (res.reactVersion && res.reactDomVersion && res.reactVersion !== res.reactDomVersion) {
-    review('react ' + res.reactVersion + ' ו-react-dom ' + res.reactDomVersion + ' בגרסאות שונות');
+    review('react ' + res.reactVersion + ' and react-dom ' + res.reactDomVersion + ' are at different versions');
   }
-  res.notes.push('גרסת React (' + (res.reactVersion || '?') + ') נקראה מ-node_modules – זו הגרסה המותקנת, לא בהכרח זו שנטענת בדפדפן תחת Host');
+  res.notes.push('The React version (' + (res.reactVersion || '?') + ') was read from node_modules – this is the installed version, not necessarily the one loaded in the browser under a Host');
   res.notes.push(HOST_NOTE);
   return res;
 }
@@ -283,12 +283,12 @@ function formatText(res) {
   const L = ['', SCRIPT + (res.dryRun ? ' [dry-run]' : '') + (res.command ? ' – ' + res.command : '')];
   const mark = (v) => (v === true ? '✓' : v === false ? '⛔' : '–');
   if (res.startupMs !== null) {
-    L.push('🚀 השרת עלה תוך ' + Math.round(res.startupMs / 1000) + 's על פורט ' + res.port);
+    L.push('🚀 The server started in ' + Math.round(res.startupMs / 1000) + 's on port ' + res.port);
     L.push(mark(res.remoteEntryOk) + ' ' + (res.remoteEntryUrl || 'remoteEntry.js'));
     L.push(mark(res.rootOk) + ' GET /');
   }
   if (res.reactVersion !== null || res.startupMs !== null) {
-    L.push('⚛ React ' + (res.reactVersion || '?') + ' | react-dom ' + (res.reactDomVersion || '?') + ' | react-dom/client: ' + (res.hasReactDomClient ? 'כן' : 'לא'));
+    L.push('⚛ React ' + (res.reactVersion || '?') + ' | react-dom ' + (res.reactDomVersion || '?') + ' | react-dom/client: ' + (res.hasReactDomClient ? 'yes' : 'no'));
   }
   res.blockers.forEach((b) => {
     L.push('⛔ ' + b.message);

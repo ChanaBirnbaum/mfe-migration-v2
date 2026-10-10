@@ -19,7 +19,7 @@ function parseArgs(argv) {
   argv.forEach((a) => {
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   });
   return opts;
 }
@@ -30,12 +30,12 @@ function listSourceFiles(fs, root) {
   const srcDir = path.join(root, 'src');
   let stat = null;
   try { stat = fs.statSync(srcDir); } catch (_) { /* missing */ }
-  if (!stat || !stat.isDirectory()) throw new CodemodError('תיקיית src/ לא נמצאה ב-' + root);
+  if (!stat || !stat.isDirectory()) throw new CodemodError('No src/ folder found in ' + root);
   const out = [];
   const walk = (dir) => {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
-      throw new CodemodError('לא ניתן לקרוא את ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
+      throw new CodemodError('Cannot read ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
@@ -87,7 +87,7 @@ function reviewReason(info, targetModule) {
   const conf = info.conf;
   if (conf.movedTo && targetModule.split('/').slice(0, 2).join('/') === conf.movedTo) return null;
   if (conf.review) return conf.review;
-  if (info.deep) return 'ייבוא עמוק (' + targetModule + ') – ייתכן שהנתיב אינו קיים ב-MUI v7';
+  if (info.deep) return 'Deep import (' + targetModule + ') – the path may not exist in MUI v7';
   return null;
 }
 
@@ -154,7 +154,7 @@ function transformFile(tsm, sf, file, mapping) {
     if (!module.startsWith(OLD_PREFIX)) return 1;
     const line = decl.getStartLineNumber();
     const info = analyzeModule(module, mapping);
-    if (info.kind === 'unknown') { addManual(line, module + ': חבילה ללא מיפוי ב-mui-mapping.json'); return 1; }
+    if (info.kind === 'unknown') { addManual(line, module + ': package has no mapping in mui-mapping.json'); return 1; }
     if (info.kind === 'manual') {
       // חבילה ללא יעד (@material-ui/styles): פריט לכל שם מוכר בשורה שלו, והודעת החבילה לכל השאר
       const specs = info.packageLevel ? decl.getNamedImports() : [];
@@ -181,7 +181,7 @@ function transformFile(tsm, sf, file, mapping) {
     const ns = decl.getNamespaceImport();
     if (ns) {
       group(info.wholeTarget).namespaceLocal = ns.getText();
-      if (info.conf.moved) change(line, 'MUI.IMPORT', 'namespace import', 'ייבוא namespace מ-' + module + ' – חלק מהרכיבים עברו ל-' + info.conf.movedTo);
+      if (info.conf.moved) change(line, 'MUI.IMPORT', 'namespace import', 'Namespace import from ' + module + ' – some components moved to ' + info.conf.movedTo);
     }
     decl.getNamedImports().forEach((spec) => {
       const name = spec.getName();
@@ -252,7 +252,7 @@ function transformFile(tsm, sf, file, mapping) {
   // ---- re-exports: not one of the supported patterns ----
   sf.getExportDeclarations().forEach((ed) => {
     const m = ed.getModuleSpecifierValue();
-    if (m && m.startsWith(OLD_PREFIX)) addManual(ed.getStartLineNumber(), 'export ... from \'' + m + '\' – re-export, יש להמיר ידנית');
+    if (m && m.startsWith(OLD_PREFIX)) addManual(ed.getStartLineNumber(), 'export ... from \'' + m + '\' – re-export, convert manually');
   });
 
   // ---- require('@material-ui/...') ----
@@ -268,7 +268,7 @@ function transformFile(tsm, sf, file, mapping) {
     const module = lit.getLiteralText();
     const line = call.getStartLineNumber();
     const info = analyzeModule(module, mapping);
-    if (info.kind === 'unknown') return addManual(line, module + ': חבילה ללא מיפוי ב-mui-mapping.json');
+    if (info.kind === 'unknown') return addManual(line, module + ': package has no mapping in mui-mapping.json');
     if (info.kind === 'manual') return addManual(line, info.reason);
     const parent = call.getParent();
 
@@ -288,7 +288,7 @@ function transformFile(tsm, sf, file, mapping) {
       const pattern = parent.getNameNode();
       const elements = pattern.getElements();
       if (elements.some((el) => el.getDotDotDotToken())) {
-        return addManual(line, 'require עם rest (...) מ-' + module + ' – יש להמיר ידנית');
+        return addManual(line, 'require with rest (...) from ' + module + ' – convert manually');
       }
       const groups = new Map();
       const stayingTexts = [];
@@ -316,7 +316,7 @@ function transformFile(tsm, sf, file, mapping) {
       const stmt = parent.getVariableStatement();
       if (!stmt || stmt.getDeclarations().length !== 1) {
         changes.pop();
-        return addManual(line, 'require מ-' + module + ' בהצהרה מרובת משתנים – יש לפצל ידנית');
+        return addManual(line, 'require from ' + module + ' in a multi-variable declaration – split it manually');
       }
       const kind = stmt.getDeclarationKind();
       const quote = lit.getText().charAt(0);
@@ -336,7 +336,7 @@ function transformFile(tsm, sf, file, mapping) {
 
     // const Core = require('x') / other whole-module use
     if (info.conf.moved && info.kind === 'root') {
-      change(line, 'MUI.REQUIRE', module + ' → ' + info.wholeTarget, 'require של כל ' + module + ' – חלק מהרכיבים עברו ל-' + info.conf.movedTo);
+      change(line, 'MUI.REQUIRE', module + ' → ' + info.wholeTarget, 'require of all of ' + module + ' – some components moved to ' + info.conf.movedTo);
     } else {
       change(line, 'MUI.REQUIRE', module + ' → ' + info.wholeTarget, reviewReason(info, info.wholeTarget));
     }
@@ -368,7 +368,7 @@ function transformFile(tsm, sf, file, mapping) {
       else if (Node.isExportSpecifier(p)) p.replaceWithText(r.to + ' as ' + r.from);
       else id.replaceWithText(r.to);
     });
-    change(firstLine, 'MUI.RENAME', r.from + ' → ' + r.to + ' (' + ids.length + ' שימושים)');
+    change(firstLine, 'MUI.RENAME', r.from + ' → ' + r.to + ' (' + ids.length + ' usages)');
   });
 
   // ---- theme.palette.type → theme.palette.mode ----
@@ -395,7 +395,7 @@ function transformFile(tsm, sf, file, mapping) {
       const inTheme = !!p.getFirstAncestor((a) => Node.isCallExpression(a) && /(^|\.)(createTheme|createMuiTheme)$/.test(a.getExpression().getText()));
       p.getNameNode().replaceWithText(pal.to);
       change(p.getStartLineNumber(), 'MUI.PALETTE_MODE', 'palette: { ' + pal.from + ' } → { ' + pal.to + ' }',
-        inTheme ? null : 'palette.' + pal.from + ' באובייקט שאינו ארגומנט ישיר של createTheme – ודא שזה theme של MUI');
+        inTheme ? null : 'palette.' + pal.from + ' in an object that is not a direct argument of createTheme – make sure it is an MUI theme');
     });
 
   const remaining = sf.getImportDeclarations().filter((d) => d.getModuleSpecifierValue().startsWith(OLD_PREFIX)).length +
@@ -424,7 +424,7 @@ async function formatWithPrettier(root, files, fs, res) {
   try {
     prettier = require(require.resolve('prettier', { paths: [root] }));
   } catch (_) {
-    if (files.length) res.notes.push('prettier לא מותקן בשירות – הקבצים לא עוצבו');
+    if (files.length) res.notes.push('prettier is not installed in the service – the files were not formatted');
     return;
   }
   for (const full of files) {
@@ -432,13 +432,13 @@ async function formatWithPrettier(root, files, fs, res) {
     // prettier של השירות: קונפיג שבור, parser חסר או תחביר שהוא לא מכיר – צפוי, לא קריסה
     try {
       const config = await prettier.resolveConfig(full);
-      if (!config) continue; // אין קונפיגורציה בריפו – לא מעצבים, כדי לא לייצר diff ענק
+      if (!config) continue; // no config in the repo – do not format, to avoid a huge diff
       const text = fs.readFileSync(full, 'utf8');
       const out = await prettier.format(text, Object.assign({}, config, { filepath: full }));
       if (out !== text) fs.writeFileSync(full, out, 'utf8');
     } catch (err) {
-      const why = String((err && err.message) || err).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || 'שגיאה לא ידועה';
-      res.blockers.push({ file: rel, message: rel + ': prettier נכשל – ' + why + '. שינויי הייבוא נכתבו לקובץ, אך הוא לא עוצב. הרץ prettier ידנית על הקובץ ובדוק את השגיאה' });
+      const why = String((err && err.message) || err).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || 'unknown error';
+      res.blockers.push({ file: rel, message: rel + ': prettier failed – ' + why + '. The import changes were written to the file, but it was not formatted. Run prettier manually on the file and check the error' });
     }
   }
 }
@@ -452,11 +452,11 @@ async function run(argv, overrides) {
 
   let tsm;
   try { tsm = require('ts-morph'); } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
   let mapping;
   try { mapping = JSON.parse(require('fs').readFileSync(MAPPING_FILE, 'utf8')); } catch (err) {
-    return blocked('לא ניתן לטעון את reference/mui-mapping.json: ' + err.message);
+    return blocked('Cannot load reference/mui-mapping.json: ' + err.message);
   }
 
   let files;
@@ -477,7 +477,7 @@ async function run(argv, overrides) {
   for (const full of files) {
     const rel = toPosix(path.relative(deps.cwd, full));
     let raw;
-    try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked('לא ניתן לקרוא את ' + rel + ': ' + err.message); }
+    try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked('Cannot read ' + rel + ': ' + err.message); }
     // סינון ביצועים בלבד: קובץ שאין בו אף אחת מהמחרוזות לא יכול להכיל מה להמיר.
     // ההחלטה מה להמיר מתקבלת אך ורק מה-AST (מופע בתוך הערה לא ישנה דבר)
     if (raw.indexOf(OLD_PREFIX) === -1 && raw.indexOf('palette') === -1) continue;
@@ -493,7 +493,7 @@ async function run(argv, overrides) {
     if (out !== text) {
       res.filesChanged.push(rel);
       if (!opts.dryRun) {
-        try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('לא ניתן לכתוב את ' + rel + ': ' + err.message); }
+        try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('Cannot write ' + rel + ': ' + err.message); }
         written.push(full);
       }
     }
@@ -506,7 +506,7 @@ async function run(argv, overrides) {
   if (res.blockers.length) res.result = 'BLOCKED';
   else if (res.changes.length === 0 && remaining === 0) res.result = 'NOOP';
   else if (res.manual.length || reviews.length) res.result = 'REVIEW';
-  if (remaining) res.notes.push(remaining + ' ייבואים מ-@material-ui נשארו (ראה manual)');
+  if (remaining) res.notes.push(remaining + ' imports from @material-ui remain (see manual)');
   return res;
 }
 
@@ -517,7 +517,7 @@ function formatText(res) {
   if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
     const byRule = {};
     res.changes.forEach((c) => { byRule[c.rule] = (byRule[c.rule] || 0) + 1; });
-    L.push('✏️ ' + res.filesChanged.length + ' קבצים ' + (res.dryRun ? 'היו משתנים' : 'שונו') +
+    L.push('✏️ ' + res.filesChanged.length + ' files ' + (res.dryRun ? 'would change' : 'changed') +
       (Object.keys(byRule).length ? ' | ' + Object.keys(byRule).map((k) => k + ' ×' + byRule[k]).join(', ') : ''));
     res.changes.filter((c) => c.confidence === 'review').forEach((c) => L.push('🔍 ' + c.file + ':' + c.line + ' – ' + c.reason));
     res.manual.forEach((m) => L.push('✋ ' + m.file + ':' + m.line + ' – ' + m.reason));

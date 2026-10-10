@@ -5,7 +5,7 @@
     "@material-ui/icons": { "target": "@mui/icons-material", "applyRenames": false },
     "@material-ui/lab": {
       "target": "@mui/lab",
-      "review": "@mui/lab אינו מוצהר ב-package.json ורכיבי lab השתנו בין גרסאות – יש לוודא ידנית",
+      "review": "@mui/lab is not declared in package.json and lab components changed between versions – check manually",
       "movedTo": "@mui/material",
       "moved": [
         "Alert", "AlertTitle", "Autocomplete", "AvatarGroup", "Pagination", "PaginationItem", "Rating",
@@ -15,11 +15,11 @@
     },
     "@material-ui/pickers": {
       "target": "@mui/x-date-pickers",
-      "review": "ה-API של @mui/x-date-pickers שונה מ-@material-ui/pickers (LocalizationProvider, adapter, שמות רכיבים) – נדרשת בדיקה ידנית"
+      "review": "The @mui/x-date-pickers API differs from @material-ui/pickers (LocalizationProvider, adapter, component names) – needs manual review"
     },
     "@material-ui/styles": {
       "target": null,
-      "manual": "ל-@material-ui/styles אין יעד ב-MUI v7. makeStyles מומר ב-codemod-makestyles; withStyles, createStyles ו-StylesProvider דורשים המרה ידנית"
+      "manual": "@material-ui/styles has no target in MUI v7. makeStyles is converted by codemod-makestyles; withStyles, createStyles and StylesProvider need manual conversion"
     }
   },
   "renames": {
@@ -35,12 +35,12 @@
     "ExpansionPanelActions": "AccordionActions"
   },
   "manual": {
-    "makeStyles": "makeStyles מומר ב-codemod-makestyles (מופעים שתלויים ב-props נשארים שם לטיפול ידני)",
-    "withStyles": "withStyles אינו נתמך ב-MUI v7. נדרשת המרה ידנית ל-styled() או sx",
-    "createStyles": "createStyles אינו נתמך ב-MUI v7. בתוך makeStyles הוא מוסר ב-codemod-makestyles; בכל שימוש אחר נדרשת המרה ידנית ל-styled() או sx",
-    "StylesProvider": "StylesProvider אינו נתמך ב-MUI v7. נדרשת המרה ידנית – בדרך כלל הסרה, או StyledEngineProvider עם injectFirst אם שימש לסדר טעינת ה-CSS",
-    "Hidden": "Hidden הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery / sx display)",
-    "withWidth": "withWidth הוסר ב-v5 – דורש המרה סמנטית (useMediaQuery)"
+    "makeStyles": "makeStyles is converted by codemod-makestyles (instances that depend on props are left there for manual handling)",
+    "withStyles": "withStyles is not supported in MUI v7. Needs manual conversion to styled() or sx",
+    "createStyles": "createStyles is not supported in MUI v7. Inside makeStyles it is removed by codemod-makestyles; any other usage needs manual conversion to styled() or sx",
+    "StylesProvider": "StylesProvider is not supported in MUI v7. Needs manual conversion – usually removal, or StyledEngineProvider with injectFirst if it was used to control CSS load order",
+    "Hidden": "Hidden was removed in v5 – needs a semantic conversion (useMediaQuery / sx display)",
+    "withWidth": "withWidth was removed in v5 – needs a semantic conversion (useMediaQuery)"
   },
   "palette": {
     "from": "type",

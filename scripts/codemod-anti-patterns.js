@@ -28,7 +28,7 @@ function parseArgs(argv) {
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--no-cancel-guard') opts.guard = false;
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   });
   return opts;
 }
@@ -39,12 +39,12 @@ function listSourceFiles(fs, root) {
   const srcDir = path.join(root, 'src');
   let stat = null;
   try { stat = fs.statSync(srcDir); } catch (_) { /* missing */ }
-  if (!stat || !stat.isDirectory()) throw new CodemodError('תיקיית src/ לא נמצאה ב-' + root);
+  if (!stat || !stat.isDirectory()) throw new CodemodError('No src/ folder found in ' + root);
   const out = [];
   const walk = (dir) => {
     let entries;
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (err) {
-      throw new CodemodError('לא ניתן לקרוא את ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
+      throw new CodemodError('Cannot read ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
@@ -118,7 +118,7 @@ function transformFile(tsm, sf, file, opts) {
         reason: edit.review || undefined });
     } catch (err) {
       if (!(err instanceof Manual)) throw err;
-      manual.push({ file: file, line: line, reason: 'useEffect אסינכרוני לא הומר: ' + err.message });
+      manual.push({ file: file, line: line, reason: 'Async useEffect not converted: ' + err.message });
     }
   }
 
@@ -127,13 +127,13 @@ function transformFile(tsm, sf, file, opts) {
     if (Node.isFunctionExpression(fn)) {
       const usesThis = fn.getDescendantsOfKind(K.ThisKeyword).some((t) => ownerFn(t) === fn) ||
         fn.getDescendantsOfKind(K.Identifier).some((i) => i.getText() === 'arguments' && ownerFn(i) === fn);
-      if (usesThis) throw new Manual('function עם this / arguments – המרה לפונקציית חץ תשנה התנהגות');
+      if (usesThis) throw new Manual('function with this / arguments – converting to an arrow function would change behavior');
     }
     if (fn.getDescendantsOfKind(K.ForOfStatement).some((f) => f.isAwaited && f.isAwaited())) throw new Manual('for await');
     const awaits = own(fn, fn, K.AwaitExpression);
     // ancestors of the await that belong to this effect function (not to an outer function)
     if (awaits.some((a) => a.getAncestors().some((x) => LOOP_KINDS.has(x.getKind()) && ownerFn(x) === fn))) {
-      throw new Manual('await בתוך לולאה');
+      throw new Manual('await inside a loop');
     }
 
     // component scope – names in use and state setters
@@ -145,7 +145,7 @@ function transformFile(tsm, sf, file, opts) {
     });
     const pick = (cands) => {
       const n = cands.find((c) => !scopeNames.has(c));
-      if (!n) throw new Manual('אין שם פנוי ל-' + cands[0]);
+      if (!n) throw new Manual('No free name for ' + cands[0]);
       scopeNames.add(n);
       return n;
     };
@@ -191,7 +191,7 @@ function transformFile(tsm, sf, file, opts) {
         c.getExpression().getText() === propsName && PROP_SETTER_NAME.test(c.getName());
     }).map((call) => call.getExpression().getText()) : [];
     const review = propSetterCalls.length
-      ? 'קריאה ל-' + Array.from(new Set(propSetterCalls)).join(', ') + ' – פונקציה שהגיעה כ-prop ולא מ-useState מקומי, ולכן לא נעטפה ב-cancelled guard. ודא ידנית אם היא מעדכנת state אחרי await'
+      ? 'Call to ' + Array.from(new Set(propSetterCalls)).join(', ') + ' – a function that came in as a prop, not from a local useState, so it was not wrapped in the cancelled guard. Check manually whether it updates state after await'
       : null;
 
     // body → statements
@@ -199,19 +199,19 @@ function transformFile(tsm, sf, file, opts) {
     const isBlock = Node.isBlock(body);
     const statements = isBlock ? body.getStatements() : [];
     if (!isBlock && opts.guard && Node.isCallExpression(unwrap(body)) && isSetState(unwrap(body)) && awaits.length) {
-      throw new Manual('גוף ביטוי עם setState אחרי await – יש להמיר ידנית');
+      throw new Manual('Expression body with setState after await – convert manually');
     }
 
     // returns
     const returns = own(fn, fn, K.ReturnStatement);
     let cleanup = null;
-    if (returns.length > 1) throw new Manual(returns.length + ' פקודות return');
+    if (returns.length > 1) throw new Manual(returns.length + ' return statements');
     if (returns.length === 1) {
       const ret = returns[0];
       const expr = unwrap(ret.getExpression());
       const isLast = statements.length && statements[statements.length - 1] === ret;
       const fnLike = expr && (Node.isArrowFunction(expr) || Node.isFunctionExpression(expr) || Node.isIdentifier(expr));
-      if (fnLike && !isLast) throw new Manual('cleanup מוחזר מתוך תנאי / לא בסוף ה-effect');
+      if (fnLike && !isLast) throw new Manual('cleanup is returned from inside a condition / not at the end of the effect');
       if (fnLike) {
         // cleanup ירוץ ב-scope של ה-effect, מחוץ ל-run – אסור שיפנה למשתנים שהוגדרו בגוף
         const declared = new Set();
@@ -220,7 +220,7 @@ function transformFile(tsm, sf, file, opts) {
         own(fn, fn, K.FunctionDeclaration).forEach((f) => f.getName() && declared.add(f.getName()));
         const refs = (Node.isIdentifier(expr) ? [expr] : expr.getDescendantsOfKind(K.Identifier)).map((i) => i.getText());
         const leaked = refs.filter((r) => declared.has(r));
-        if (leaked.length) throw new Manual('ה-cleanup משתמש במשתנים מגוף ה-effect (' + Array.from(new Set(leaked)).join(', ') + ')');
+        if (leaked.length) throw new Manual('The cleanup uses variables from the effect body (' + Array.from(new Set(leaked)).join(', ') + ')');
         cleanup = { ret: ret, expr: expr };
       }
     }
@@ -241,7 +241,7 @@ function transformFile(tsm, sf, file, opts) {
         const args = call.getArguments();
         const arg = args.length === 1 ? unwrap(args[0]) : null;
         if (!arg || !Node.isAwaitExpression(arg) || own(call.getExpression(), fn, K.AwaitExpression).length) {
-          throw new Manual('setState עם await בארגומנטים במבנה מורכב (שורה ' + st.getStartLineNumber() + ')');
+          throw new Manual('setState with await in its arguments in a complex structure (line ' + st.getStartLineNumber() + ')');
         }
         // setX(await f()) – הבדיקה חייבת לקרות אחרי ה-await, לכן מפצלים
         const tmp = pick(['result', 'awaitedValue', 'effectResult']);
@@ -370,7 +370,7 @@ function transformFile(tsm, sf, file, opts) {
 
 function conflictMessage(rel, text, err) {
   const line = text.slice(0, err.pos).split('\n').length;
-  return rel + ':' + line + ' – ' + SCRIPT + ' יצר שתי עריכות חופפות באותו מקום (באג בקודמוד). הקובץ לא שונה – יש להמיר אותו ידנית או לדווח על הבאג';
+  return rel + ':' + line + ' – ' + SCRIPT + ' produced two overlapping edits at the same place (a bug in the codemod). The file was not changed – convert it manually or report the bug';
 }
 
 function run(argv, overrides) {
@@ -382,7 +382,7 @@ function run(argv, overrides) {
 
   let tsm;
   try { tsm = require('ts-morph'); } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
   let files;
   try { files = listSourceFiles(deps.fs, deps.cwd); } catch (err) {
@@ -399,7 +399,7 @@ function run(argv, overrides) {
   for (const full of files) {
     const rel = toPosix(path.relative(deps.cwd, full));
     let raw;
-    try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked('לא ניתן לקרוא את ' + rel + ': ' + err.message); }
+    try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked('Cannot read ' + rel + ': ' + err.message); }
     const bom = raw.charCodeAt(0) === 0xfeff ? '﻿' : '';
     const text = bom ? raw.slice(1) : raw;
     const sf = project.createSourceFile('/' + rel, text, { overwrite: true });
@@ -411,7 +411,7 @@ function run(argv, overrides) {
     } catch (err) {
       if (!(err instanceof EditConflict)) throw err;
       res.blockers.push({ file: rel, message: conflictMessage(rel, text, err) });
-      continue; // הקובץ לא נכתב, והשינויים שלו לא מדווחים
+      continue; // the file was not written, and its changes are not reported
     } finally {
       project.removeSourceFile(sf);
     }
@@ -420,11 +420,11 @@ function run(argv, overrides) {
     if (!r.edits.length) continue;
     res.filesChanged.push(rel);
     if (!opts.dryRun) {
-      try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('לא ניתן לכתוב את ' + rel + ': ' + err.message); }
+      try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('Cannot write ' + rel + ': ' + err.message); }
     }
   }
 
-  if (!opts.guard && res.changes.length) res.notes.push('הומר ללא cancelled guard (--no-cancel-guard)');
+  if (!opts.guard && res.changes.length) res.notes.push('Converted without the cancelled guard (--no-cancel-guard)');
   if (res.blockers.length) res.result = 'BLOCKED';
   else if (res.changes.length === 0 && res.manual.length === 0) res.result = 'NOOP';
   else if (res.manual.length || res.changes.some((c) => c.confidence === 'review')) res.result = 'REVIEW';
@@ -436,7 +436,7 @@ function formatText(res) {
   res.blockers.forEach((b) => L.push('⛔ ' + b.message));
   // BLOCKED of a single file still has a summary of the rest; a precondition BLOCKED (no src/ …) has nothing else
   if (res.result !== 'BLOCKED' || res.changes.length || res.manual.length) {
-    L.push('⏳ ' + res.changes.length + ' useEffect אסינכרוניים הומרו ב-' + res.filesChanged.length + ' קבצים' + (res.dryRun ? ' (dry-run)' : ''));
+    L.push('⏳ ' + res.changes.length + ' async useEffects converted in ' + res.filesChanged.length + ' files' + (res.dryRun ? ' (dry-run)' : ''));
     res.changes.forEach((c) => L.push((c.confidence === 'review' ? '   🔍 ' : '   ✓ ') + c.file + ':' + c.line + (c.reason ? ' – ' + c.reason : '')));
     res.manual.forEach((m) => L.push('✋ ' + m.file + ':' + m.line + ' – ' + m.reason));
     res.notes.forEach((n) => L.push('ℹ ' + n));

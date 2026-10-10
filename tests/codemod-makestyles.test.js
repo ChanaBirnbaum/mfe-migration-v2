@@ -66,7 +66,7 @@ test('golden: level C (props) → manual with exact reason, file unchanged', () 
   const { res } = golden('props-level');
   assert.strictEqual(res.result, 'REVIEW');
   assert.strictEqual(res.manual.length, 1);
-  assert.match(res.manual[0].reason, /רמה C – המפתחות box תלויים ב-props/);
+  assert.match(res.manual[0].reason, /Level C – the keys box depend on props/);
   assert.strictEqual(res.manual[0].line, 4);
 });
 
@@ -106,7 +106,7 @@ test('Popper with classes.paper → manual (Popper has no paper slot), file unch
   ].join('\n');
   const { res, out } = convert(src);
   assert.strictEqual(out, src);
-  assert.match(res.manual[0].reason, /ל-Popper אין slot בשם paper/);
+  assert.match(res.manual[0].reason, /Popper has no slot named paper/);
 });
 
 test('classes passed as a whole object → manual, nothing deleted', () => {
@@ -121,7 +121,7 @@ test('classes passed as a whole object → manual, nothing deleted', () => {
   ].join('\n');
   const { res, out } = convert(src);
   assert.strictEqual(out, src);
-  assert.match(res.manual[0].reason, /אובייקט שלם/);
+  assert.match(res.manual[0].reason, /whole object/);
 });
 
 test('className on a non-MUI component → manual', () => {
@@ -137,14 +137,14 @@ test('className on a non-MUI component → manual', () => {
   ].join('\n');
   const { res, out } = convert(src);
   assert.strictEqual(out, src);
-  assert.match(res.manual[0].reason, /שאינו רכיב MUI/);
+  assert.match(res.manual[0].reason, /not an MUI component/);
 });
 
 test('JSS-only syntax ($ref) and fallback arrays → manual', () => {
   const ref = convert("import { makeStyles } from '@material-ui/core';\nconst useStyles = makeStyles({ a: { '&:hover $b': { color: 'red' } }, b: {} });\nexport const P = () => { const classes = useStyles(); return <div className={classes.a} />; };\n");
   assert.match(ref.res.manual[0].reason, /JSS/);
   const arr = convert("import { makeStyles } from '@material-ui/core';\nconst useStyles = makeStyles({ a: { margin: [0, 'auto'] } });\nexport const P = () => { const classes = useStyles(); return <div className={classes.a} />; };\n");
-  assert.match(arr.res.manual[0].reason, /רספונסיבי/);
+  assert.match(arr.res.manual[0].reason, /responsive/);
 });
 
 test('destructured classes + className on MUI component + makeStyles kept when another instance remains', () => {
@@ -182,7 +182,7 @@ test('validation: a generated syntax error leaves the file untouched and reports
   ].join('\n');
   const { res, out } = convert(src, { table: table });
   assert.strictEqual(out, src);
-  assert.match(res.manual[0].reason, /ולידציה נכשלה/);
+  assert.match(res.manual[0].reason, /Validation failed/);
   assert.deepStrictEqual(res.changes, []);
 });
 
@@ -227,7 +227,7 @@ test('overlapping edits → BLOCKED with file:line, exit 0, file untouched, no c
   let out = '';
   const code = main([], { cwd: root, applyEdits: overlapping }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
   assert.strictEqual(code, 0);
-  assert.match(out, /⛔ src\/Report\.jsx:\d+ – codemod-makestyles יצר שתי עריכות חופפות באותו מקום/);
+  assert.match(out, /⛔ src\/Report\.jsx:\d+ – codemod-makestyles produced two overlapping edits at the same place/);
   assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: BLOCKED');
   assert.strictEqual(readIn(root, 'src/Report.jsx'), f.input);
   const res = run([], { cwd: repo({ 'src/Report.jsx': f.input }), applyEdits: overlapping });

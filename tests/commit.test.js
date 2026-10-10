@@ -24,20 +24,20 @@ function write(root, rel, text) {
   fs.writeFileSync(full, text);
 }
 
-// Repo with a bare origin, on a work branch, with one initial commit.
+// Repo with a bare origin, on digital_V2 (created by branch.js from main), with one initial commit.
 function makeRepo() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'commit-test-'));
   const origin = path.join(base, 'origin.git');
   const work = path.join(base, 'work');
-  g(base, ['init', '--bare', '-q', '-b', 'digital_V2', origin]);
-  g(base, ['init', '-q', '-b', 'digital_V2', work]);
+  g(base, ['init', '--bare', '-q', '-b', 'main', origin]);
+  g(base, ['init', '-q', '-b', 'main', work]);
   g(work, ['remote', 'add', 'origin', origin]);
   write(work, 'package.json', '{ "name": "svc" }\n');
   write(work, 'src/App.jsx', 'export default 1;\n');
   g(work, ['add', '.']);
   g(work, ['commit', '-q', '-m', 'init']);
-  g(work, ['push', '-q', 'origin', 'digital_V2']);
-  g(work, ['checkout', '-q', '-b', 'feature/migration-v2-svc-20261005']);
+  g(work, ['push', '-q', 'origin', 'main']);
+  g(work, ['checkout', '-q', '-b', 'digital_V2']);
   return { work: work, origin: origin };
 }
 
@@ -169,9 +169,18 @@ test('missing / invalid --step → BLOCKED', () => {
   assert.deepStrictEqual(check(run(['--step', 'all'], deps(r.work))), ['step']);
 });
 
-test('protected branch → BLOCKED', () => {
+test('commits on digital_V2 are allowed – it is the work branch, not protected', () => {
   const r = makeRepo();
-  g(r.work, ['checkout', '-q', 'digital_V2']);
+  assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), 'digital_V2');
+  write(r.work, 'src/x.js', 'x');
+  const res = run(['--step', 'mechanical'], deps(r.work));
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.strictEqual(res.branch, 'digital_V2');
+});
+
+test('protected branch (main / master) → BLOCKED', () => {
+  const r = makeRepo();
+  g(r.work, ['checkout', '-q', 'main']);
   write(r.work, 'src/x.js', 'x');
   assert.deepStrictEqual(check(run(['--step', 'mechanical'], deps(r.work))), ['protected-branch']);
   assert.notStrictEqual(g(r.work, ['status', '--porcelain']), '');
@@ -189,7 +198,7 @@ test('unresolved conflict → BLOCKED, conflict not staged as resolved', () => {
   g(r.work, ['checkout', '-q', '-b', 'other']);
   write(r.work, 'src/App.jsx', 'other\n');
   g(r.work, ['commit', '-q', '-am', 'other']);
-  g(r.work, ['checkout', '-q', 'feature/migration-v2-svc-20261005']);
+  g(r.work, ['checkout', '-q', 'digital_V2']);
   write(r.work, 'src/App.jsx', 'mine\n');
   g(r.work, ['commit', '-q', '-am', 'mine']);
   try { g(r.work, ['merge', 'other']); } catch (_) { /* conflict expected */ }

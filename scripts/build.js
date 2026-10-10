@@ -34,14 +34,14 @@ function parseArgs(argv) {
     else if (a === '--json') opts.json = true;
     else if (a === '--command' || a.startsWith('--command=')) {
       const v = a === '--command' ? argv[++i] : a.slice('--command='.length);
-      if (!v || !v.trim()) opts.errors.push('‎--command דורש פקודה');
+      if (!v || !v.trim()) opts.errors.push('--command requires a command');
       else opts.command = v.trim();
     } else if (a === '--timeout' || a.startsWith('--timeout=')) {
       const v = a === '--timeout' ? argv[++i] : a.slice('--timeout='.length);
       const ms = parseDuration(v);
-      if (ms === null) opts.errors.push('‎--timeout לא תקין: "' + v + '"');
+      if (ms === null) opts.errors.push('Invalid --timeout: "' + v + '"');
       else opts.timeoutMs = ms;
-    } else opts.errors.push('פרמטר לא מוכר: ' + a);
+    } else opts.errors.push('Unknown argument: ' + a);
   }
   return opts;
 }
@@ -216,19 +216,19 @@ async function run(argv, overrides) {
   } else {
     let pkg;
     try { pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')); } catch (err) {
-      return blocked('לא ניתן לקרוא את package.json: ' + err.message);
+      return blocked('Cannot read package.json: ' + err.message);
     }
     const scripts = pkg.scripts || {};
     if (!scripts[DEFAULT_SCRIPT]) {
       const builds = Object.keys(scripts).filter((k) => /build/.test(k));
-      return blocked('אין סקריפט "' + DEFAULT_SCRIPT + '" ב-package.json' + (builds.length ? ' (קיימים: ' + builds.join(', ') + ')' : '') +
-        '. העבר --command "<פקודה>" – שים לב שפקודות build כאן דורשות --env sviva=...');
+      return blocked('No "' + DEFAULT_SCRIPT + '" script in package.json' + (builds.length ? ' (available: ' + builds.join(', ') + ')' : '') +
+        '. Pass --command "<command>" – note that build commands here require --env sviva=...');
     }
     res.buildCommand = 'npm run ' + DEFAULT_SCRIPT;
   }
 
   if (opts.dryRun) {
-    res.notes.push('[dry-run] היה מורץ: ' + res.buildCommand);
+    res.notes.push('[dry-run] would run: ' + res.buildCommand);
     return res;
   }
 
@@ -254,24 +254,24 @@ async function run(argv, overrides) {
   res.durationMs = deps.now() - started;
   res.exitCode = outcome.code;
 
-  if (outcome.spawnError) return blocked('לא ניתן להריץ את "' + res.buildCommand + '": ' + outcome.spawnError.message);
+  if (outcome.spawnError) return blocked('Cannot run "' + res.buildCommand + '": ' + outcome.spawnError.message);
 
   const parsed = parseOutput(outcome.output, root);
   res.diagnostics = parsed.diagnostics;
   if (outcome.timedOut) {
-    res.diagnostics.push(diag('webpack', 'error', null, null, null, 'TIMEOUT', 'ה-build לא הסתיים תוך ' + Math.round(opts.timeoutMs / 60000) + ' דקות',
+    res.diagnostics.push(diag('webpack', 'error', null, null, null, 'TIMEOUT', 'The build did not finish within ' + Math.round(opts.timeoutMs / 60000) + ' minutes',
       outcome.output.split(/\r?\n/).slice(-30).join('\n')));
   } else if (outcome.code !== 0 && !res.diagnostics.some((d) => d.severity === 'error')) {
     // הפקודה נכשלה אך לא זוהתה אף שגיאה – לעולם לא מדווחים OK; קלוד יקרא את ה-raw
-    res.diagnostics.push(diag('webpack', 'error', null, null, null, 'UNPARSED_FAILURE', 'הפקודה נכשלה (exit ' + outcome.code + ') ולא זוהתה שגיאה ניתנת לפרסור',
+    res.diagnostics.push(diag('webpack', 'error', null, null, null, 'UNPARSED_FAILURE', 'The command failed (exit ' + outcome.code + ') and no parsable error was found',
       outcome.output.split(/\r?\n/).slice(-60).join('\n')));
   }
   res.errorCount = res.diagnostics.filter((d) => d.severity === 'error').length;
   res.warningCount = res.diagnostics.filter((d) => d.severity === 'warning').length;
   // webpack סופר בלוקים (בלוק eslint אחד = שגיאה אחת), לכן ההשוואה היא מול מספר הבלוקים שזוהו
   if (parsed.reported && (parsed.reported.errors !== parsed.blocks.errors || parsed.reported.warnings !== parsed.blocks.warnings)) {
-    res.notes.push('webpack דיווח ' + parsed.reported.errors + ' שגיאות ו-' + parsed.reported.warnings + ' אזהרות, אך זוהו ' + parsed.blocks.errors + '/' + parsed.blocks.warnings +
-      ' בלוקים – ייתכן שחלק מהפלט לא פורסר; ראה raw ב-build-<n>.json');
+    res.notes.push('webpack reported ' + parsed.reported.errors + ' errors and ' + parsed.reported.warnings + ' warnings, but ' + parsed.blocks.errors + '/' + parsed.blocks.warnings +
+      ' blocks were found – part of the output may not have been parsed; see raw in build-<n>.json');
   }
 
   // .migration/build-<n>.json
@@ -291,10 +291,10 @@ async function run(argv, overrides) {
     fs.writeFileSync(path.join(root, outFile), JSON.stringify(res, null, 2) + '\n', 'utf8');
     res.changes.push({ file: outFile, rule: 'BUILD.REPORT', confidence: 'auto' });
   } catch (err) {
-    res.notes.push('לא ניתן לכתוב את ' + outFile + ': ' + err.message);
+    res.notes.push('Cannot write ' + outFile + ': ' + err.message);
   }
   if (res.result === 'BLOCKED' && !res.blockers.length) {
-    res.blockers.push({ message: res.errorCount + ' שגיאות build' + (outcome.timedOut ? ' (timeout)' : '') });
+    res.blockers.push({ message: res.errorCount + ' build errors' + (outcome.timedOut ? ' (timeout)' : '') });
   }
   return res;
 }
@@ -305,11 +305,11 @@ function formatText(res) {
     let trend = '';
     if (res.previous && typeof res.previous.errorCount === 'number') {
       const d = res.errorCount - res.previous.errorCount;
-      trend = ' | מול הרצה ' + res.previous.run + ': ' + res.previous.errorCount + ' → ' + res.errorCount + (d < 0 ? ' 📉' : d > 0 ? ' 📈' : ' ➖');
+      trend = ' | vs run ' + res.previous.run + ': ' + res.previous.errorCount + ' → ' + res.errorCount + (d < 0 ? ' 📉' : d > 0 ? ' 📈' : ' ➖');
     }
-    L.push('🔨 הרצה #' + res.run + ' | exit ' + res.exitCode + ' | ⏱ ' + Math.round(res.durationMs / 1000) + 's | ⛔ ' + res.errorCount + ' שגיאות | ⚠ ' + res.warningCount + ' אזהרות' + trend);
+    L.push('🔨 run #' + res.run + ' | exit ' + res.exitCode + ' | ⏱ ' + Math.round(res.durationMs / 1000) + 's | ⛔ ' + res.errorCount + ' errors | ⚠ ' + res.warningCount + ' warnings' + trend);
     res.diagnostics.forEach((d) => {
-      const loc = d.file ? d.file + (d.line ? ':' + d.line + (d.column ? ':' + d.column : '') : '') : '(ללא קובץ)';
+      const loc = d.file ? d.file + (d.line ? ':' + d.line + (d.column ? ':' + d.column : '') : '') : '(no file)';
       L.push((d.severity === 'error' ? '  ⛔ ' : '  ⚠ ') + '[' + d.source + (d.code ? ' ' + d.code : '') + '] ' + loc + ' – ' + d.message);
     });
     if (res.changes.length) L.push('💾 ' + res.changes[0].file);

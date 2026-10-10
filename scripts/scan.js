@@ -23,10 +23,10 @@ function parseArgs(argv) {
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--out') {
       const v = argv[i + 1];
-      if (!v || v.startsWith('--')) opts.errors.push('‎--out דורש נתיב');
+      if (!v || v.startsWith('--')) opts.errors.push('--out requires a path');
       else { opts.out = v; i++; }
     } else if (a.startsWith('--out=')) opts.out = a.slice('--out='.length);
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   }
   return opts;
 }
@@ -41,12 +41,12 @@ function readJson(fs, file, label) {
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    throw new ScanError('לא ניתן לקרוא את ' + label + ': ' + err.message);
+    throw new ScanError('Cannot read ' + label + ': ' + err.message);
   }
   try {
     return JSON.parse(text);
   } catch (err) {
-    throw new ScanError(label + ' אינו JSON תקין: ' + err.message);
+    throw new ScanError(label + ' is not valid JSON: ' + err.message);
   }
 }
 
@@ -63,7 +63,7 @@ function listSourceFiles(fs, root, rules) {
   const srcDir = path.join(root, 'src');
   let stat;
   try { stat = fs.statSync(srcDir); } catch (_) { stat = null; }
-  if (!stat || !stat.isDirectory()) throw new ScanError('תיקיית src/ לא נמצאה ב-' + root);
+  if (!stat || !stat.isDirectory()) throw new ScanError('No src/ folder found in ' + root);
   const skip = new Set(rules.skipDirs);
   const exts = new Set(rules.sourceExtensions);
   const out = [];
@@ -72,7 +72,7 @@ function listSourceFiles(fs, root, rules) {
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (err) {
-      throw new ScanError('לא ניתן לקרוא את התיקייה ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
+      throw new ScanError('Cannot read the folder ' + toPosix(path.relative(root, dir)) + ': ' + err.message);
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
@@ -652,7 +652,7 @@ function analyzeFederation(fs, root, project, h) {
   try {
     text = fs.readFileSync(configPath, 'utf8');
   } catch (err) {
-    throw new ScanError('לא ניתן לקרוא את webpack.config.js: ' + err.message);
+    throw new ScanError('Cannot read webpack.config.js: ' + err.message);
   }
   const sf = project.createSourceFile('/__config__/webpack.config.js', text, { overwrite: true });
   const result = Object.assign({}, base, { configFile: 'webpack.config.js' });
@@ -805,7 +805,7 @@ function scan(root, deps) {
   try {
     tsm = deps.tsMorph || require('ts-morph');
   } catch (_) {
-    throw new ScanError('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    throw new ScanError('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
   const h = astHelpers(tsm);
   const realFs = require('fs');
@@ -814,7 +814,7 @@ function scan(root, deps) {
   const targets = readJson(realFs, path.join(REFERENCE_DIR, 'versions.json'), 'reference/versions.json');
 
   const pkgPath = path.join(root, 'package.json');
-  if (!fs.existsSync(pkgPath)) throw new ScanError('package.json לא נמצא בשורש (' + root + ')');
+  if (!fs.existsSync(pkgPath)) throw new ScanError('package.json not found in the root (' + root + ')');
   const pkg = readJson(fs, pkgPath, 'package.json');
 
   const files = listSourceFiles(fs, root, rules);
@@ -848,7 +848,7 @@ function scan(root, deps) {
     try {
       text = fs.readFileSync(full, 'utf8');
     } catch (err) {
-      throw new ScanError('לא ניתן לקרוא את ' + file + ': ' + err.message);
+      throw new ScanError('Cannot read ' + file + ': ' + err.message);
     }
     const sf = project.createSourceFile('/' + file, text, { overwrite: true });
     sourceFiles.set(file, sf);
@@ -924,34 +924,34 @@ function scan(root, deps) {
     if (key === '...' || typeof target !== 'string') return;
     const full = resolveModuleFile(fs, root, target);
     if (!full) {
-      warnings.push({ kind: 'exposes', message: 'הקובץ החשוף ' + target + ' (' + key + ') לא נמצא' });
+      warnings.push({ kind: 'exposes', message: 'The exposed file ' + target + ' (' + key + ') was not found' });
       return;
     }
     const rel = toPosix(path.relative(root, full));
     let sf = sourceFiles.get(rel);
     if (!sf) {
       let text;
-      try { text = fs.readFileSync(full, 'utf8'); } catch (err) { throw new ScanError('לא ניתן לקרוא את ' + rel + ': ' + err.message); }
+      try { text = fs.readFileSync(full, 'utf8'); } catch (err) { throw new ScanError('Cannot read ' + rel + ': ' + err.message); }
       sf = project.createSourceFile('/' + rel, text, { overwrite: true });
     }
     const res = analyzeExposedProps(sf, rel, key, rules, h);
-    if (!res.resolved) warnings.push({ kind: 'exposes', file: rel, message: 'לא זוהתה קומפוננטת default ב-' + rel + ' – בדוק ידנית props של ה-API החשוף' });
+    if (!res.resolved) warnings.push({ kind: 'exposes', file: rel, message: 'No default component found in ' + rel + ' – check the props of the exposed API manually' });
     inv.contextCrossing.push.apply(inv.contextCrossing, res.items);
   });
 
   inv.react18Only.forEach((u) => warnings.push({
     kind: 'react18Only', file: u.file, line: u.line,
-    message: u.api + ' אינו קיים ב-React 17 – תחת Host ישן הקוד ירוץ על React 17 וייכשל',
+    message: u.api + ' does not exist in React 17 – under an old Host the code runs on React 17 and will fail',
   }));
   inv.routerPost602.forEach((u) => warnings.push({
     kind: 'routerPost602', file: u.file, line: u.line,
-    message: u.api + ' נוסף אחרי react-router 6.0.2 – יישבר תחת Host ישן',
+    message: u.api + ' was added after react-router 6.0.2 – it will break under an old Host',
   }));
   inv.makeStyles.filter((m) => m.level === 'unknown').forEach((m) => warnings.push({
-    kind: 'makeStyles', file: m.file, line: m.line, message: 'לא ניתן לזהות את אובייקט הסגנונות של makeStyles',
+    kind: 'makeStyles', file: m.file, line: m.line, message: 'Cannot identify the makeStyles styles object',
   }));
-  if (federation.configShape === 'unknown') warnings.push({ kind: 'federation', message: 'מבנה webpack.config.js לא זוהה' });
-  if (federation.plugin && federation.role === 'unknown') warnings.push({ kind: 'federation', message: 'אפשרויות ModuleFederationPlugin אינן אובייקט ליטרלי' });
+  if (federation.configShape === 'unknown') warnings.push({ kind: 'federation', message: 'The structure of webpack.config.js was not recognized' });
+  if (federation.plugin && federation.role === 'unknown') warnings.push({ kind: 'federation', message: 'The ModuleFederationPlugin options are not an object literal' });
 
   const depsRange = (name) => (pkg.dependencies && pkg.dependencies[name]) || (pkg.devDependencies && pkg.devDependencies[name]) || null;
   const versionInfo = (name) => ({
@@ -1002,7 +1002,7 @@ function countBy(list, fn) {
 function formatText(res) {
   const L = [];
   if (res.result === 'BLOCKED' && !res.inventory) {
-    L.push('⛔ הסריקה נכשלה');
+    L.push('⛔ The scan failed');
     res.blockers.forEach((b) => L.push('   ' + b.message));
     L.push('RESULT: BLOCKED');
     return L.join('\n') + '\n';
@@ -1010,34 +1010,34 @@ function formatText(res) {
   const inv = res.inventory;
   const pad = '   ';
   const react = inv.react;
-  L.push('📦 ' + (inv.service.name || '(ללא שם)'));
+  L.push('📦 ' + (inv.service.name || '(no name)'));
   L.push(pad + 'React ' + (react.installed || minVersion(react.range) || react.range || '?') + ' → ' + (react.target || '?'));
-  L.push(pad + inv.filesScanned + ' קבצים נסרקו');
+  L.push(pad + inv.filesScanned + ' files scanned');
 
   const muiPkgs = countBy(inv.muiFiles.reduce((acc, f) => acc.concat(
     Array.from(new Set(f.imports.map((i) => i.module.split('/').slice(0, 2).join('/'))))), []), (x) => x);
-  Array.from(muiPkgs.keys()).sort().forEach((p) => L.push(pad + muiPkgs.get(p) + ' קבצים עם ' + p));
+  Array.from(muiPkgs.keys()).sort().forEach((p) => L.push(pad + muiPkgs.get(p) + ' files with ' + p));
 
   if (inv.makeStyles.length) {
     const lv = countBy(inv.makeStyles, (m) => m.level);
     const parts = ['static', 'theme', 'props', 'unknown'].filter((k) => k !== 'unknown' || lv.get(k))
       .map((k) => (lv.get(k) || 0) + ' ' + k);
-    L.push(pad + inv.makeStyles.length + ' מופעי makeStyles: ' + parts.join(' | '));
+    L.push(pad + inv.makeStyles.length + ' makeStyles instances: ' + parts.join(' | '));
     const empty = inv.makeStyles.reduce((n, m) => n + m.emptyKeys.length, 0);
-    if (empty) L.push(pad + '🧹 ' + empty + ' מפתחות ריקים/מוערים ב-makeStyles');
+    if (empty) L.push(pad + '🧹 ' + empty + ' empty/commented-out keys in makeStyles');
   } else {
-    L.push(pad + 'אין מופעי makeStyles');
+    L.push(pad + 'no makeStyles instances');
   }
   if (inv.jssApis.length) {
     // שובר את ה-build: ייבוא מ-@material-ui (החבילה מוסרת) שאינו createStyles בתוך makeStyles
     const breaking = inv.jssApis.filter((u) => /^@material-ui\//.test(u.module || '') && !u.insideMakeStyles);
     const c = countBy(breaking, (u) => u.api);
     const rest = inv.jssApis.length - breaking.length;
-    L.push(pad + '🧱 JSS ללא המרה: ' + (breaking.length ? Array.from(c.keys()).map((k) => k + ' ×' + c.get(k)).join(', ') +
-      ' ב-' + new Set(breaking.map((u) => u.file)).size + ' קבצים' : 'אין שימושים שוברים') +
-      (rest ? ' (+' + rest + ' בתוך makeStyles / מ-@mui/styles)' : ''));
+    L.push(pad + '🧱 JSS without conversion: ' + (breaking.length ? Array.from(c.keys()).map((k) => k + ' ×' + c.get(k)).join(', ') +
+      ' in ' + new Set(breaking.map((u) => u.file)).size + ' files' : 'no breaking usages') +
+      (rest ? ' (+' + rest + ' inside makeStyles / from @mui/styles)' : ''));
   }
-  if (inv.asyncEffects.length) L.push(pad + '⏳ ' + inv.asyncEffects.length + ' useEffect עם פונקציה async');
+  if (inv.asyncEffects.length) L.push(pad + '⏳ ' + inv.asyncEffects.length + ' useEffect with an async function');
   if (inv.reactDomApi.length) {
     const c = countBy(inv.reactDomApi, (u) => u.api);
     L.push(pad + '🧩 ReactDOM legacy: ' + Array.from(c.keys()).map((k) => k + ' ×' + c.get(k)).join(', '));
@@ -1052,8 +1052,8 @@ function formatText(res) {
   }
 
   const fed = inv.federation;
-  if (!fed.configFile) L.push(pad + '🔗 federation: אין webpack.config.js → standalone');
-  else if (!fed.plugin) L.push(pad + '🔗 federation: standalone (אין ModuleFederationPlugin) | config: ' + fed.configShape);
+  if (!fed.configFile) L.push(pad + '🔗 federation: no webpack.config.js → standalone');
+  else if (!fed.plugin) L.push(pad + '🔗 federation: standalone (no ModuleFederationPlugin) | config: ' + fed.configShape);
   else {
     let shared = '-';
     if (fed.shared) {
@@ -1073,22 +1073,22 @@ function formatText(res) {
   if (inv.contextCrossing.length) {
     const ctx = inv.contextCrossing.filter((c) => c.kind === 'useContext').length;
     const props = inv.contextCrossing.filter((c) => c.kind === 'exposedProp');
-    L.push(pad + '🔀 חציית גבול: ' + ctx + ' useContext חיצוני' +
-      (props.length ? ' | props ב-API החשוף: ' + props.map((p) => p.prop + ' (' + p.propKind + ')').join(', ') : ''));
+    L.push(pad + '🔀 boundary crossing: ' + ctx + ' external useContext' +
+      (props.length ? ' | props in the exposed API: ' + props.map((p) => p.prop + ' (' + p.propKind + ')').join(', ') : ''));
   }
   if (inv.blockers.length) {
-    L.push(pad + '⛔ ' + inv.blockers.length + ' חבילות לא תואמות React 18:');
+    L.push(pad + '⛔ ' + inv.blockers.length + ' packages not compatible with React 18:');
     inv.blockers.forEach((b) => L.push(pad + '   ' + b.package + ' ' + b.range + ' → ' +
-      (b.fixedIn || b.alternative || '?') + (b.uncertain ? ' (גרסה לא ודאית)' : '')));
+      (b.fixedIn || b.alternative || '?') + (b.uncertain ? ' (uncertain version)' : '')));
   }
   if (inv.warnings.length) {
-    L.push(pad + '⚠️ ' + inv.warnings.length + ' אזהרות:');
+    L.push(pad + '⚠️ ' + inv.warnings.length + ' warnings:');
     inv.warnings.forEach((w) => L.push(pad + '   ' + (w.file ? w.file + (w.line ? ':' + w.line : '') + ' – ' : '') + w.message));
   }
   L.push(pad + '💾 ' + res.outputStatus);
-  res.notes.forEach((n) => L.push(pad + 'הערה: ' + n));
-  if (res.result === 'BLOCKED') L.push('⛔ ' + res.blockers.length + ' חסמים – יש לטפל בחבילות הלא תואמות לפני שנוגעים בקוד');
-  else if (res.result === 'REVIEW') L.push('⏸ ' + res.manual.length + ' פריטים לבדיקה לפני שממשיכים');
+  res.notes.forEach((n) => L.push(pad + 'Note: ' + n));
+  if (res.result === 'BLOCKED') L.push('⛔ ' + res.blockers.length + ' blockers – the incompatible packages must be handled before touching the code');
+  else if (res.result === 'REVIEW') L.push('⏸ ' + res.manual.length + ' items to review before continuing');
   L.push('RESULT: ' + res.result);
   return L.join('\n') + '\n';
 }
@@ -1120,18 +1120,18 @@ function run(argv, overrides) {
 
   let outputStatus;
   if (unchanged) {
-    outputStatus = outRel + ' לא השתנה';
+    outputStatus = outRel + ' unchanged';
   } else if (opts.dryRun) {
-    outputStatus = '[dry-run] היה נכתב: ' + outRel;
+    outputStatus = '[dry-run] would write: ' + outRel;
     base.changes.push({ file: outRel, rule: 'SCAN.INVENTORY', confidence: 'auto' });
   } else {
     try {
       deps.fs.mkdirSync(path.dirname(outAbs), { recursive: true });
       deps.fs.writeFileSync(outAbs, content, 'utf8');
     } catch (err) {
-      return Object.assign(base, { result: 'BLOCKED', blockers: [{ message: 'לא ניתן לכתוב את ' + outRel + ': ' + err.message }] });
+      return Object.assign(base, { result: 'BLOCKED', blockers: [{ message: 'Cannot write ' + outRel + ': ' + err.message }] });
     }
-    outputStatus = 'נכתב: ' + outRel;
+    outputStatus = 'written: ' + outRel;
     base.changes.push({ file: outRel, rule: 'SCAN.INVENTORY', confidence: 'auto' });
   }
 
@@ -1142,10 +1142,10 @@ function run(argv, overrides) {
   // RESULT: deny-list → BLOCKED (the pipeline stops before any code is touched);
   // React-18-only / post-6.0.2 router APIs, or a deny-list match with unknown version → REVIEW
   inventory.blockers.forEach((b) => {
-    const fix = [b.fixedIn ? 'שדרוג ל-' + b.fixedIn : null, b.alternative ? 'החלפה ב-' + b.alternative : null].filter(Boolean).join(' או ');
-    const message = 'חבילה לא תואמת React 18: ' + b.package + ' ' + b.range + ' (' + b.sections.join(', ') + ') – ' + b.reason;
+    const fix = [b.fixedIn ? 'upgrade to ' + b.fixedIn : null, b.alternative ? 'replace with ' + b.alternative : null].filter(Boolean).join(' or ');
+    const message = 'Package not compatible with React 18: ' + b.package + ' ' + b.range + ' (' + b.sections.join(', ') + ') – ' + b.reason;
     if (b.uncertain) {
-      base.manual.push({ file: 'package.json', line: null, reason: message + '. הגרסה לא ודאית (' + b.range + ', לא מותקנת) – ודא ידנית' + (fix ? '; אם אינה תואמת: ' + fix : '') });
+      base.manual.push({ file: 'package.json', line: null, reason: message + '. The version is uncertain (' + b.range + ', not installed) – check manually' + (fix ? '; if it is not compatible: ' + fix : '') });
     } else {
       base.blockers.push({ message: message, package: b.package, range: b.range, suggestion: fix || null });
     }

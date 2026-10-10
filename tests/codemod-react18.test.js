@@ -102,7 +102,7 @@ test('entry from webpack config + import() boundary → main.jsx treated as boot
   assert.strictEqual(readIn(root, 'src/main.jsx'), fixture('bootstrap-plain').expected);
   // render outside bootstrap is never converted
   assert.match(readIn(root, 'src/Other.jsx'), /ReactDOM\.render/);
-  assert.ok(res.manual.some((m) => m.file === 'src/Other.jsx' && /מחוץ לקובץ bootstrap/.test(m.reason)));
+  assert.ok(res.manual.some((m) => m.file === 'src/Other.jsx' && /outside the bootstrap file/.test(m.reason)));
 });
 
 test('hydrate → hydrateRoot (argument order swapped); unmount with root in scope', () => {
@@ -141,7 +141,7 @@ test('unmount without an accessible root → manual', () => {
   });
   const res = run([], { cwd: root });
   assert.strictEqual(res.result, 'REVIEW');
-  assert.ok(res.manual.some((m) => m.line === 6 && /אין root נגיש/.test(m.reason)));
+  assert.ok(res.manual.some((m) => m.line === 6 && /no root reachable/.test(m.reason)));
   // react-dom is still needed for the manual call → named client import added instead
   assert.match(readIn(root, 'src/bootstrap.js'), /^import ReactDOM from 'react-dom';\nimport \{ createRoot \} from 'react-dom\/client';/);
   assert.match(readIn(root, 'src/bootstrap.js'), / {2}const root = createRoot\(el\);\n {2}root\.render\(<App \/>\);/);
@@ -213,8 +213,8 @@ test('overlapping edits → BLOCKED with file:line, exit 0, that file untouched,
   const code = main([], { cwd: root, applyEdits: overlapping('ReactDOM.render') }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
   assert.strictEqual(code, 0);
   // line 2: the first edit is the 'react-dom' → 'react-dom/client' specifier
-  assert.match(out, /⛔ src\/bootstrap\.jsx:2 – codemod-react18 יצר שתי עריכות חופפות באותו מקום \(באג בקודמוד\)\. הקובץ לא שונה/);
-  assert.match(out, /✏️ 1 קבצים שונו/); // the summary of the rest is still printed
+  assert.match(out, /⛔ src\/bootstrap\.jsx:2 – codemod-react18 produced two overlapping edits at the same place \(a bug in the codemod\)\. The file was not changed/);
+  assert.match(out, /✏️ 1 files changed/); // the summary of the rest is still printed
   assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: BLOCKED');
   assert.strictEqual(readIn(root, 'src/bootstrap.jsx'), bootstrap);
   assert.doesNotMatch(readIn(root, 'src/Card.jsx'), /defaultProps/);

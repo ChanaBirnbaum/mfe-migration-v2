@@ -51,19 +51,25 @@ async function go(root, argv, m) {
 const state = (root) => JSON.parse(fs.readFileSync(path.join(root, '.migration', 'state.json'), 'utf8'));
 const last = (out) => out.trimEnd().split('\n').pop();
 
-const BRANCH_PROBE = { branch: (args) => (args.indexOf('--dry-run') !== -1 ? { targetBranch: 'feature/migration-v2-hasava-mfe-20261006' } : {}) };
+const BRANCH_PROBE = {
+  branch: (args) => (args.indexOf('--dry-run') !== -1
+    ? { sourceBranch: 'develop', previousBranch: 'develop', targetBranch: args.indexOf('--target') !== -1 ? args[args.indexOf('--target') + 1] : 'digital_V2' }
+    : {}),
+};
 
 // ---- approval point ----
 
-test('fresh run stops before branch and suggests the derived name', async () => {
+test('fresh run stops before branch: source (current branch) → digital_V2, asks to approve the source', async () => {
   const root = repo();
   const m = mock(BRANCH_PROBE);
   const out = await go(root, [], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan', 'branch']);
   assert.deepStrictEqual(m.calls[2].args, ['--json', '--dry-run']); // probe only
   assert.match(out, /\[ 1\/18] preflight\s+✓ OK/);
-  assert.match(out, /\[ 3\/18] branch\s+⏸ PAUSE {5}נדרש אישור שם בראנץ'/);
-  assert.ok(out.indexOf('להמשך: ' + RUN_CMD + ' --resume --answer branch.target=feature/migration-v2-hasava-mfe-20261006') !== -1, out);
+  assert.match(out, /\[ 3\/18] branch\s+⏸ PAUSE {5}Approval needed: create digital_V2 from develop \(current branch\)/);
+  assert.match(out, /branch from: develop {3}→ {3}new branch: digital_V2/);
+  assert.ok(out.indexOf('Next: ' + RUN_CMD + ' --resume --answer branch.source=develop') !== -1, out);
+  assert.match(out, /--answer branch\.target=<name>/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   const s = state(root);
   assert.deepStrictEqual(s.completed, ['preflight', 'scan']);
@@ -72,26 +78,64 @@ test('fresh run stops before branch and suggests the derived name', async () => 
   assert.strictEqual(s.service, 'hasava-mfe');
 });
 
-test('--resume --answer passes the name to branch and continues', async () => {
+test('approval PAUSE shows probe blockers (digital_V2 already exists)', async () => {
+  const root = repo();
+  const m = mock({ branch: { sourceBranch: 'develop', targetBranch: 'digital_V2', blockers: [{ message: 'Target branch digital_V2 already exists on origin – the service was probably migrated already' }] } });
+  const out = await go(root, [], m);
+  assert.match(out, /⛔ Target branch digital_V2 already exists on origin/);
+  assert.strictEqual(last(out), 'RESULT: PAUSE');
+});
+
+test('probe says NOOP (already on digital_V2) → no approval pause, branch runs and the pipeline continues', async () => {
+  const root = repo();
+  const m = mock({
+    branch: (args) => ({ result: 'NOOP', targetBranch: 'digital_V2', previousBranch: 'digital_V2' }),
+    'package-json': { result: 'BLOCKED', blockers: [{ message: 'x' }] },
+  });
+  const out = await go(root, [], m);
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan', 'branch', 'branch', 'package-json']);
+  assert.deepStrictEqual(m.calls[3].args, ['--json']);
+  assert.doesNotMatch(out, /Approval needed/);
+  assert.match(out, /\[ 3\/18] branch\s+✓ NOOP/);
+});
+
+test('--answer branch.target before approval → probe and the PAUSE use the other name', async () => {
+  const root = repo();
+  const m = mock(BRANCH_PROBE);
+  const out = await go(root, ['--answer', 'branch.target=digital_V2-b'], m);
+  assert.deepStrictEqual(m.calls[2].args, ['--json', '--dry-run', '--target', 'digital_V2-b']);
+  assert.match(out, /create digital_V2-b from develop/);
+  assert.ok(out.indexOf('--resume --answer branch.source=develop --answer branch.target=digital_V2-b') !== -1, out);
+});
+
+test('--resume --answer branch.target + branch.source → both passed to branch', async () => {
   const root = repo();
   await go(root, [], mock(BRANCH_PROBE));
-  const m = mock({ 'codemod-makestyles': { result: 'REVIEW', manual: [{ file: 'src/D.jsx', line: 4, reason: 'רמה C – box תלוי ב-props' }], notes: ['בדוק ויזואלית'] } });
-  const out = await go(root, ['--resume', '--answer', 'branch.target=feature/x'], m);
-  assert.deepStrictEqual(m.calls[0], { id: 'branch', args: ['--json', '--target', 'feature/x'] });
+  const m = mock({ 'package-json': { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
+  await go(root, ['--resume', '--answer', 'branch.source=release/1', '--answer', 'branch.target=gen2'], m);
+  assert.deepStrictEqual(m.calls[0], { id: 'branch', args: ['--json', '--target', 'gen2', '--source', 'release/1'] });
+});
+
+test('--resume --answer branch.source passes the source to branch and continues', async () => {
+  const root = repo();
+  await go(root, [], mock(BRANCH_PROBE));
+  const m = mock({ 'codemod-makestyles': { result: 'REVIEW', manual: [{ file: 'src/D.jsx', line: 4, reason: 'level C – box depends on props' }], notes: ['check visually'] } });
+  const out = await go(root, ['--resume', '--answer', 'branch.source=develop'], m);
+  assert.deepStrictEqual(m.calls[0], { id: 'branch', args: ['--json', '--source', 'develop'] });
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['branch', 'package-json', 'codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'commit-mechanical', 'codemod-makestyles']);
   assert.deepStrictEqual(m.calls[5].args, ['--json', '--step', 'mechanical']);
   // REVIEW prints the full content and pauses; the step itself is done
   assert.match(out, /\[ 9\/18] codemod-makestyles\s+⏸ REVIEW/);
-  assert.match(out, /1\. src\/D\.jsx:4 – רמה C – box תלוי ב-props/);
-  assert.match(out, /ℹ בדוק ויזואלית/);
+  assert.match(out, /1\. src\/D\.jsx:4 – level C – box depends on props/);
+  assert.match(out, /ℹ check visually/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   const s = state(root);
-  assert.strictEqual(s.answers['branch.target'], 'feature/x');
+  assert.strictEqual(s.answers['branch.source'], 'develop');
   assert.strictEqual(s.current, 'use-shared-state');
   assert.ok(s.completed.indexOf('codemod-makestyles') !== -1);
 });
 
-test('--yes skips the approval: branch runs with its derived name', async () => {
+test('--yes skips the approval: branch runs with its defaults (current branch → digital_V2)', async () => {
   const root = repo();
   const m = mock({ 'codemod-mui-imports': { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
   await go(root, ['--yes'], m);
@@ -102,10 +146,10 @@ test('--yes skips the approval: branch runs with its derived name', async () => 
 
 test('BLOCKED → PAUSE with blockers; --resume reruns the same step', async () => {
   const root = repo();
-  const m1 = mock({ install: { result: 'BLOCKED', blockers: [{ message: 'ERESOLVE – קונפליקט', tree: 'peer react@"^17" from x' }] } });
+  const m1 = mock({ install: { result: 'BLOCKED', blockers: [{ message: 'ERESOLVE – conflict', tree: 'peer react@"^17" from x' }] } });
   const out = await go(root, ['--yes'], m1);
   assert.match(out, /\[13\/18] install\s+⛔ BLOCKED/);
-  assert.match(out, /⛔ ERESOLVE – קונפליקט\n {5}\| peer react@"\^17" from x/);
+  assert.match(out, /⛔ ERESOLVE – conflict\n {5}\| peer react@"\^17" from x/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   assert.strictEqual(state(root).current, 'install');
   assert.ok(state(root).completed.indexOf('install') === -1);
@@ -118,7 +162,7 @@ test('BLOCKED → PAUSE with blockers; --resume reruns the same step', async () 
 test('webpack-validate REVIEW → PAUSE before build, full error output printed; --resume continues at build', async () => {
   const root = repo();
   const output = 'Error: FederationConfigError: role\n    at buildSharedGen1 (index.js:3:9)\n    at Object.<anonymous> (webpack.config.js:12:5)';
-  const m1 = mock({ 'webpack-validate': { result: 'REVIEW', manual: [{ file: 'webpack.config.js', line: null, reason: 'הוולידציה נכשלה', output: output }] } });
+  const m1 = mock({ 'webpack-validate': { result: 'REVIEW', manual: [{ file: 'webpack.config.js', line: null, reason: 'validation failed', output: output }] } });
   const out = await go(root, ['--yes'], m1);
   assert.match(out, /\[14\/18] webpack-validate\s+⏸ REVIEW/);
   assert.match(out, / {7}\| {5}at Object\.<anonymous> \(webpack\.config\.js:12:5\)/);
@@ -152,11 +196,11 @@ test('build failure → PAUSE_FOR_FIX with diagnostics; resume reruns build and 
   let out = '';
   const m = mock({ build: failing(5) });
   out = await go(root, ['--yes', '--from', 'build'], m);
-  assert.match(out, /\[15\/18] build\s+🔧 PAUSE_FOR_FIX 5 שגיאות \| סבב 1\/5/);
+  assert.match(out, /\[15\/18] build\s+🔧 PAUSE_FOR_FIX 5 errors \| round 1\/5/);
   assert.match(out, /⛔ \[tsc TS2322\] src\/A\.tsx:1:1 – bad 0/);
   assert.strictEqual(last(out), 'RESULT: PAUSE_FOR_FIX');
   out = await go(root, ['--resume'], mock({ build: failing(3) }));
-  assert.match(out, /3 שגיאות \(קודם: 5\) \| סבב 2\/5/);
+  assert.match(out, /3 errors \(previous: 5\) \| round 2\/5/);
   assert.strictEqual(state(root).buildIterations, 2);
 });
 
@@ -166,7 +210,7 @@ test('no progress for 2 rounds → PAUSE (not PAUSE_FOR_FIX)', async () => {
   await go(root, ['--resume'], mock({ build: failing(3) }));          // 3  progress
   await go(root, ['--resume'], mock({ build: failing(3) }));          // 3  stalled 1
   const out = await go(root, ['--resume'], mock({ build: failing(4) })); // 4  stalled 2
-  assert.match(out, /אין התקדמות: מספר השגיאות לא ירד ב-2 סבבים \(5 → 3 → 3 → 4\)/);
+  assert.match(out, /No progress: the error count did not go down in 2 rounds \(5 → 3 → 3 → 4\)/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   assert.strictEqual(state(root).current, 'build');
 });
@@ -176,10 +220,10 @@ test('max 5 rounds → PAUSE even while improving; next resume starts a new wind
   await toBuild(root);
   for (const n of [4, 3, 2]) await go(root, ['--resume'], mock({ build: failing(n) }));
   const out = await go(root, ['--resume'], mock({ build: failing(1) }));
-  assert.match(out, /הגעה למקסימום 5 סבבי תיקון \(5 → 4 → 3 → 2 → 1\)/);
+  assert.match(out, /Reached the maximum of 5 fix rounds \(5 → 4 → 3 → 2 → 1\)/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   const again = await go(root, ['--resume'], mock({ build: failing(1) }));
-  assert.match(again, /סבב 1\/5/);
+  assert.match(again, /round 1\/5/);
 });
 
 test('build passes → pipeline continues to the end → OK, state finished', async () => {
@@ -188,7 +232,7 @@ test('build passes → pipeline continues to the end → OK, state finished', as
   const m = mock({});
   const out = await go(root, ['--resume'], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['build', 'verify-runtime', 'commit-build-fixes', 'report']);
-  assert.match(out, /✅ הצינור הושלם/);
+  assert.match(out, /✅ The pipeline is complete/);
   assert.strictEqual(last(out), 'RESULT: OK');
   const s = state(root);
   assert.strictEqual(s.current, null);
@@ -234,7 +278,7 @@ test('printed next command points at the real run.js, so it works from the servi
   const root = repo();
   let out = '';
   await main([], { cwd: root, runStep: mock(BRANCH_PROBE).runStep }, { stdout: (s) => { out += s; }, stderr: () => {} });
-  const next = out.split('\n').find((l) => l.startsWith('להמשך: ')).slice('להמשך: '.length);
+  const next = out.split('\n').find((l) => l.startsWith('Next: ')).slice('Next: '.length);
   const target = next.split(' ')[1];
   assert.ok(path.isAbsolute(target), target);
   assert.ok(fs.existsSync(target), target + ' does not exist');
@@ -243,7 +287,7 @@ test('printed next command points at the real run.js, so it works from the servi
 
 test('--resume without state.json → PAUSE with a clear message', async () => {
   const out = await go(repo(), ['--resume'], mock({}));
-  assert.match(out, /אין ריצה להמשיך: \.migration\/state\.json לא נמצא/);
+  assert.match(out, /No run to resume: \.migration\/state\.json not found/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
 });
 
@@ -253,7 +297,7 @@ test('state.json of another service → PAUSE, nothing runs', async () => {
   fs.writeFileSync(path.join(root, '.migration', 'state.json'), JSON.stringify({ service: 'hasava-mfe', current: 'install', completed: [], results: {}, answers: {} }));
   const m = mock({});
   const out = await go(root, ['--resume'], m);
-  assert.match(out, /שייך לשירות "hasava-mfe" ולא ל-"other-mfe"/);
+  assert.match(out, /belongs to service "hasava-mfe", not "other-mfe"/);
   assert.strictEqual(m.calls.length, 0);
 });
 
@@ -263,7 +307,7 @@ test('plain run while a previous run is unfinished → PAUSE pointing to --resum
   const m = mock({});
   const out = await go(root, [], m);
   assert.strictEqual(m.calls.length, 0);
-  assert.match(out, /קיימת ריצה שלא הסתיימה \(עצרה ב-branch\)/);
+  assert.match(out, /A previous run did not finish \(stopped at branch\)/);
 });
 
 // ---- --from / --only / --dry-run ----
@@ -279,11 +323,11 @@ test('--only runs exactly one step and does not move the cursor', async () => {
 
 test('--from starts at the given step; unknown step → PAUSE with suggestions', async () => {
   const root = repo();
-  const m = mock({ 'use-shared-state': { result: 'BLOCKED', blockers: [{ message: 'asset חסר' }] } });
+  const m = mock({ 'use-shared-state': { result: 'BLOCKED', blockers: [{ message: 'asset missing' }] } });
   await go(root, ['--from', 'webpack-shared'], m);
   assert.strictEqual(m.calls[0].id, 'webpack-shared');
   const out = await go(root, ['--from', 'commit'], mock({}));
-  assert.match(out, /שלב לא מוכר: "commit" – התכוונת ל-commit-mechanical \/ commit-infra \/ commit-build-fixes\?/);
+  assert.match(out, /Unknown step: "commit" – did you mean commit-mechanical \/ commit-infra \/ commit-build-fixes\?/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
 });
 
@@ -297,14 +341,46 @@ test('--dry-run: every step gets --dry-run, no pauses, nothing written', async (
   assert.strictEqual(last(out), 'RESULT: BLOCKED');
 });
 
+const DRY_PLAN = {
+  scan: { result: 'BLOCKED', blockers: [{ message: 'deny-list: react-beautiful-dnd' }], notes: ['n1'] },
+  'codemod-makestyles': { result: 'REVIEW', manual: [{ file: 'src/D.jsx', line: 4, reason: 'level C' }] },
+};
+
+test('--dry-run text: blockers and manual items are printed under their step, run does not stop', async () => {
+  const m = mock(DRY_PLAN);
+  const out = await go(repo(), ['--dry-run'], m);
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ALL);
+  assert.match(out, /\[ 2\/18] scan\s+⛔ BLOCKED.*\n {2}⛔ deny-list: react-beautiful-dnd\n/);
+  assert.match(out, /\[ 9\/18] codemod-makestyles\s+⏸ REVIEW.*\n {2}✋ src\/D\.jsx:4 – level C\n/);
+  assert.strictEqual(last(out), 'RESULT: BLOCKED');
+});
+
+test('--dry-run --json: every step keeps blockers, manual and notes', async () => {
+  const res = JSON.parse(await go(repo(), ['--dry-run', '--json'], mock(DRY_PLAN)));
+  const scan = res.steps.find((s) => s.id === 'scan');
+  assert.deepStrictEqual(scan.blockers, [{ message: 'deny-list: react-beautiful-dnd' }]);
+  assert.deepStrictEqual(scan.notes, ['n1']);
+  assert.deepStrictEqual(res.steps.find((s) => s.id === 'codemod-makestyles').manual, [{ file: 'src/D.jsx', line: 4, reason: 'level C' }]);
+  const ok = res.steps.find((s) => s.id === 'preflight');
+  assert.deepStrictEqual([ok.blockers, ok.manual, ok.notes], [[], [], []]);
+});
+
+test('normal run --json: step entries carry blockers too', async () => {
+  const res = JSON.parse(await go(repo(), ['--yes', '--json'], mock({ install: { result: 'BLOCKED', blockers: [{ message: 'ERESOLVE' }] } })));
+  assert.deepStrictEqual(res.steps.find((s) => s.id === 'install').blockers, [{ message: 'ERESOLVE' }]);
+});
+
 test('--json: steps, pause and next command', async () => {
   const root = repo();
   const out = await go(root, ['--json'], mock(BRANCH_PROBE));
   const res = JSON.parse(out);
   assert.strictEqual(res.result, 'PAUSE');
   assert.strictEqual(res.pause.kind, 'approval');
-  assert.strictEqual(res.pause.suggestion, 'feature/migration-v2-hasava-mfe-20261006');
-  assert.match(res.next, /--answer branch\.target=/);
+  assert.strictEqual(res.pause.key, 'branch.source');
+  assert.strictEqual(res.pause.source, 'develop');
+  assert.strictEqual(res.pause.target, 'digital_V2');
+  assert.strictEqual(res.pause.suggestion, 'develop');
+  assert.match(res.next, /--answer branch\.source=develop$/);
   assert.deepStrictEqual(res.steps.map((s) => s.id), ['preflight', 'scan', 'branch']);
 });
 

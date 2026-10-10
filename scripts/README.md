@@ -18,9 +18,9 @@
 
 | # | שלב ב-run.js | סקריפט | מה הוא עושה | דגלים נוספים | כותב לשירות |
 |---|---|---|---|---|---|
-| 1 | preflight | `preflight.js` | בדיקות סביבה: git נקי, Node, registry, גרסאות היעד זמינות, `origin/digital_V2` | – | – (קריאה בלבד) |
+| 1 | preflight | `preflight.js` | בדיקות סביבה: git repo, עומדים על בראנץ' (לא detached HEAD), git נקי, Node, registry, גרסאות היעד זמינות | – | – (קריאה בלבד) |
 | 2 | scan | `scan.js` | מלאי מלא של השירות. deny-list → BLOCKED, ‏API של React 18 / router חדש → REVIEW | `--out <נתיב>` | `.migration/inventory.json` |
-| 3 | branch | `branch.js` | בראנץ' עבודה מ-`digital_V2` מעודכן + tag לשחזור. **נקודת אישור** | `--source`, `--target` | בראנץ' + tag |
+| 3 | branch | `branch.js` | יוצר את בראנץ' היעד `digital_V2` מבראנץ' המקור (ברירת מחדל: הבראנץ' הנוכחי) ומתייג `migration-start-<YYYYMMDD-HHmm>`. היעד לא קיים → OK; קיים ו-HEAD עליו → NOOP (תג חסר נוצר); קיים ו-HEAD במקום אחר → BLOCKED. אין origin / אין upstream → דילוג + note. **נקודת אישור** על המקור. **אפיון: [specs/branch.md](../specs/branch.md)** | `--source <מקור>`, `--target <יעד>` (ברירות מחדל: `defaultSource` / `defaultTarget` ב-`reference/commit-steps.json`) | בראנץ' + tag |
 | 4 | package-json | `package-json.js` | גרסאות היעד, עריכה נקודתית שמשמרת פורמט. pickers → review | `--inventory <נתיב>` | `package.json` |
 | 5 | codemod-mui-imports | `codemod-mui-imports.js` | `@material-ui/*` → `@mui/*`, שינויי שמות, `palette.type` | – | `src/**` |
 | 6 | codemod-react18 | `codemod-react18.js` | `createRoot` ב-bootstrap, ‏`defaultProps`, ‏`FC` + children | – | `src/**` |
@@ -45,7 +45,7 @@ node <skill-dir>/scripts/run.js [--resume] [--answer <key>=<value>]... [--from <
 ```
 
 - `--resume` – ממשיך מהשלב שנשמר ב-`.migration/state.json`
-- `--answer branch.target=<שם>` – תשובה לנקודת האישור (אפשר לחזור על הדגל)
+- `--answer branch.source=<שם>` – אישור בראנץ' המקור שממנו מסתעפים (נקודת האישור). `--answer branch.target=<שם>` – שם אחר לבראנץ' היעד במקום `digital_V2` (אופציונלי; אפשר לחזור על הדגל)
 - `--from` / `--only` – לפי שמות השלבים בעמודה "שלב ב-run.js"
 - `--yes` – דילוג על נקודות אישור (הרצת אצווה)
 
@@ -60,6 +60,6 @@ node <skill-dir>/scripts/run.js [--resume] [--answer <key>=<value>]... [--from <
 | `reference/scan-rules.json` | scan, package-json |
 | `reference/mui-mapping.json` | codemod-mui-imports |
 | `reference/mui-slots.json`, `reference/sx-rules.json` | codemod-makestyles |
-| `reference/commit-steps.json` | commit |
+| `reference/commit-steps.json` | commit (`protectedBranches`, הודעות), branch (`defaultTarget`, `defaultSource` – ‏`null` = הבראנץ' הנוכחי) |
 
 קבצי ה-`.md` ב-`reference/` הם תיעוד ל-Claude ולאדם. **מקור האמת הוא ה-JSON**.

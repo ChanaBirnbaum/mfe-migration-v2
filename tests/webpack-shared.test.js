@@ -48,8 +48,8 @@ test('golden: ({ sviva }) => {...} function config, remote', () => {
   assert.strictEqual(res.role, 'remote');
   assert.strictEqual(cfg(root), f.expected);
   assert.ok(res.notes.some((n) => /prod.*publicPath: 'auto'/.test(n)), res.notes.join('\n'));
-  assert.ok(res.notes.some((n) => /node_modules חסר/.test(n)));
-  assert.deepStrictEqual(res.validation, { ran: false, reason: 'node_modules חסר' });
+  assert.ok(res.notes.some((n) => /node_modules is missing/.test(n)));
+  assert.deepStrictEqual(res.validation, { ran: false, reason: 'node_modules is missing' });
 });
 
 test('golden: plain object config, host; deps still used → kept, pkg added next to it', () => {
@@ -59,7 +59,7 @@ test('golden: plain object config, host; deps still used → kept, pkg added nex
   assert.strictEqual(res.result, 'OK');
   assert.strictEqual(res.role, 'host');
   assert.strictEqual(cfg(root), f.expected);
-  assert.ok(res.notes.some((n) => /deps בשימוש במקום נוסף/.test(n)));
+  assert.ok(res.notes.some((n) => /deps is used elsewhere/.test(n)));
 });
 
 test('golden: hybrid → REVIEW with paste code, file unchanged', () => {
@@ -69,7 +69,7 @@ test('golden: hybrid → REVIEW with paste code, file unchanged', () => {
   assert.strictEqual(res.result, 'REVIEW');
   assert.strictEqual(res.role, 'hybrid');
   assert.strictEqual(cfg(root), f.expected);
-  assert.match(res.manual[0].reason, /היברידי/);
+  assert.match(res.manual[0].reason, /Hybrid/);
   assert.match(res.manual[0].code, /buildSharedGen1\(\{ pkg, require, role: /);
 });
 
@@ -94,7 +94,7 @@ test('unrecognised module.exports → REVIEW with exact paste code, file untouch
   let out = '';
   main([], { cwd: root }, { stdout: (s) => { out += s; }, stderr: () => {} });
   assert.strictEqual(cfg(root), src);
-  assert.match(out, /אינו פונקציה ואינו אובייקט מזוהה/);
+  assert.match(out, /is neither a function nor a recognized object/);
   assert.match(out, /\| const pkg = require\('\.\/package\.json'\);/);
   assert.match(out, /RESULT: REVIEW\n$/);
 });
@@ -171,7 +171,7 @@ test('node_modules without @ips/mfe-shared-deps → validation skipped with note
   const res = run([], { cwd: repo(files) });
   assert.strictEqual(res.result, 'OK');
   assert.strictEqual(res.validation.ran, false);
-  assert.ok(res.notes.some((n) => /לא מותקן – הוולידציה דולגה.*--validate-only/.test(n)));
+  assert.ok(res.notes.some((n) => /is not installed – validation was skipped.*--validate-only/.test(n)));
 });
 
 // ---- --validate-only ----
@@ -208,7 +208,7 @@ test('--validate-only: failure → REVIEW with the full error output, file not t
   // the summary is cut, the output is not: the 5th message line and the stack trace are there
   assert.doesNotMatch(res.validation.error, /line5/);
   assert.match(res.manual[0].output, /FederationConfigError: boom[\s\S]*line5[\s\S]*\n\s+at /);
-  assert.match(out, /פלט השגיאה המלא:[\s\S]*\| line5/);
+  assert.match(out, /full error output:[\s\S]*\| line5/);
   assert.match(out, /RESULT: REVIEW\n$/);
   assert.strictEqual(cfg(root), f.expected);
   assert.strictEqual(mtime(root), before);
@@ -218,13 +218,13 @@ test('--validate-only: before install (no node_modules / package missing) → BL
   const f = fixture('sviva-function');
   const noModules = validateOnly(repo({ 'webpack.config.js': f.expected }));
   assert.strictEqual(noModules.result, 'BLOCKED');
-  assert.match(noModules.blockers[0].message, /node_modules חסר.*install\.js/);
+  assert.match(noModules.blockers[0].message, /node_modules is missing.*install\.js/);
 
   const files = Object.assign({ 'webpack.config.js': f.expected }, FAKE_MODULES);
   delete files['node_modules/@ips/mfe-shared-deps/index.js'];
   const noPkg = validateOnly(repo(files));
   assert.strictEqual(noPkg.result, 'BLOCKED');
-  assert.match(noPkg.blockers[0].message, /@ips\/mfe-shared-deps לא מותקן/);
+  assert.match(noPkg.blockers[0].message, /@ips\/mfe-shared-deps is not installed/);
 });
 
 test('--validate-only: shared not converted yet → REVIEW, file not touched', () => {
@@ -232,7 +232,7 @@ test('--validate-only: shared not converted yet → REVIEW, file not touched', (
   const root = repo(Object.assign({ 'webpack.config.js': f.input }, FAKE_MODULES));
   const res = validateOnly(root);
   assert.strictEqual(res.result, 'REVIEW');
-  assert.match(res.manual[0].reason, /עדיין לא הומר ל-buildSharedGen1/);
+  assert.match(res.manual[0].reason, /has not been converted to buildSharedGen1 yet/);
   assert.strictEqual(cfg(root), f.input);
 });
 
@@ -279,7 +279,7 @@ test('overlapping edits → BLOCKED with file:line + paste code, exit 0, file un
   let out = '';
   const code = main([], { cwd: root, applyEdits: overlapping }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
   assert.strictEqual(code, 0);
-  assert.match(out, /⛔ webpack\.config\.js:\d+ – webpack-shared יצר שתי עריכות חופפות באותו מקום \(באג בסקריפט\)\. הקובץ לא שונה/);
+  assert.match(out, /⛔ webpack\.config\.js:\d+ – webpack-shared produced two overlapping edits at the same place \(a bug in the script\)\. The file was not changed/);
   assert.match(out, /\| shared: buildSharedGen1\(\{ pkg, require, role: 'remote' \}\),/);
   assert.match(out, /RESULT: BLOCKED\n$/);
   assert.strictEqual(cfg(root), f.input);

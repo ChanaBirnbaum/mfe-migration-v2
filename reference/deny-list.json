@@ -6,63 +6,63 @@
       "range": "<13.1.1",
       "fixedIn": "13.1.1",
       "alternative": "@hello-pangea/dnd",
-      "reason": "React 18 נתמך רק מ-13.1.1. הספרייה הוצאה משימוש – עדיף @hello-pangea/dnd"
+      "reason": "React 18 is supported only from 13.1.1. The library is deprecated – @hello-pangea/dnd is preferred"
     },
     {
       "name": "enzyme",
       "range": "*",
       "fixedIn": null,
       "alternative": "@testing-library/react",
-      "reason": "אין adapter רשמי ל-React 18"
+      "reason": "No official adapter for React 18"
     },
     {
       "name": "enzyme-adapter-react-16",
       "range": "*",
       "fixedIn": null,
       "alternative": "@testing-library/react",
-      "reason": "adapter ל-React 16 בלבד"
+      "reason": "Adapter for React 16 only"
     },
     {
       "name": "@wojtekmaj/enzyme-adapter-react-17",
       "range": "*",
       "fixedIn": null,
       "alternative": "@testing-library/react",
-      "reason": "adapter ל-React 17 בלבד"
+      "reason": "Adapter for React 17 only"
     },
     {
       "name": "react-test-renderer",
       "range": "<18.0.0",
       "fixedIn": "18.3.1",
       "alternative": null,
-      "reason": "הגרסה חייבת להתאים לגרסת React"
+      "reason": "The version must match the React version"
     },
     {
       "name": "@testing-library/react",
       "range": "<13.0.0",
       "fixedIn": "13.0.0",
       "alternative": null,
-      "reason": "React 18 נתמך מגרסה 13"
+      "reason": "React 18 is supported from version 13"
     },
     {
       "name": "@testing-library/react-hooks",
       "range": "*",
       "fixedIn": null,
       "alternative": "@testing-library/react (renderHook)",
-      "reason": "לא תומך ב-React 18; renderHook עבר ל-@testing-library/react 13.1+"
+      "reason": "Does not support React 18; renderHook moved to @testing-library/react 13.1+"
     },
     {
       "name": "react-hot-loader",
       "range": "*",
       "fixedIn": null,
       "alternative": "react-refresh",
-      "reason": "לא נתמך ב-React 18"
+      "reason": "Not supported in React 18"
     },
     {
       "name": "react-sortable-hoc",
       "range": "*",
       "fixedIn": null,
       "alternative": "@dnd-kit/sortable",
-      "reason": "peerDependencies עד React 17, ותלוי ב-findDOMNode. הפרויקט ארכיוני"
+      "reason": "peerDependencies only up to React 17, and it depends on findDOMNode. The project is archived"
     }
   ]
 }

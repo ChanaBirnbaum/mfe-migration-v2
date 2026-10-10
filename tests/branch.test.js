@@ -7,10 +7,11 @@ const os = require('os');
 const path = require('path');
 const childProcess = require('child_process');
 
-const { run, main, slugify } = require('../scripts/branch');
+const { run, main } = require('../scripts/branch');
 
 const NOW = new Date(2026, 9, 5, 14, 7); // 2026-10-05 14:07 local
-const TARGET = 'feature/migration-v2-hasava-mfe-20261005';
+const SOURCE = 'develop';
+const TARGET = 'digital_V2';
 const TAG = 'migration-start-20261005-1407';
 const SHA = '0123456789abcdef0123456789abcdef01234567';
 
@@ -22,21 +23,25 @@ const fail = (status, stderr) => ({ fail: true, status: status, stderr: stderr |
 function setup(opts) {
   opts = opts || {};
   const calls = [];
-  const localBranches = new Set(opts.localBranches || ['main', 'digital_V2']);
-  const tags = new Set(opts.tags || []);
+  const localBranches = new Set(opts.localBranches || ['main', SOURCE]);
+  // refs: { 'refs/tags/x': sha, 'refs/heads/develop': sha, HEAD: sha } → answers rev-parse --verify -q <ref>^{commit}
+  const refs = opts.refs || {};
   const responses = Object.assign({
     'rev-parse --is-inside-work-tree': 'true\n',
-    'symbolic-ref --short -q HEAD': 'main\n',
+    'symbolic-ref --short -q HEAD': SOURCE + '\n',
     'rev-parse --verify -q HEAD': SHA + '\n',
     'status --porcelain': '',
-    'ls-remote --heads origin': 'aaa\trefs/heads/digital_V2\nbbb\trefs/heads/main\n',
+    'config --get remote.origin.url': 'git@git.internal:svc/hasava-mfe.git\n',
+    'ls-remote --heads origin': 'aaa\trefs/heads/' + SOURCE + '\nbbb\trefs/heads/main\n',
+    ['rev-parse --abbrev-ref --symbolic-full-name ' + SOURCE + '@{upstream}']: 'origin/' + SOURCE + '\n',
+    'rev-parse --abbrev-ref --symbolic-full-name main@{upstream}': 'origin/main\n',
     'fetch origin --prune': '',
-    'checkout digital_V2': '',
-    'pull --ff-only --no-rebase origin digital_V2': '',
-    'rev-list --count origin/digital_V2..HEAD': '0\n',
+    'checkout main': '',
+    ['checkout ' + SOURCE]: '',
+    'pull --ff-only --no-rebase': '',
+    'rev-list --count @{upstream}..HEAD': '0\n',
     ['checkout -b ' + TARGET]: '',
     ['tag ' + TAG]: '',
-    'checkout main': '',
   }, opts.responses || {});
 
   const execFileSync = (cmd, args, options) => {
@@ -50,9 +55,11 @@ function setup(opts) {
       r = /\s|;|\.\.|^-|~|\^|:/.test(args[2]) ? fail(1) : args[2] + '\n';
     }
     if (r === undefined && args[0] === 'show-ref') {
-      const ref = args[3];
-      const exists = ref.startsWith('refs/heads/') ? localBranches.has(ref.slice(11)) : tags.has(ref.slice(10));
-      r = exists ? '' : fail(1);
+      r = localBranches.has(args[3].replace(/^refs\/heads\//, '')) ? '' : fail(1);
+    }
+    if (r === undefined && args[0] === 'rev-parse' && args[1] === '--verify' && /\^\{commit\}$/.test(args[3] || '')) {
+      const ref = args[3].replace(/\^\{commit\}$/, '');
+      r = refs[ref] ? refs[ref] + '\n' : fail(1);
     }
     if (r === undefined) r = fail(99, 'unexpected command in test: ' + key);
     if (typeof r === 'object' && r.fail) {
@@ -63,80 +70,174 @@ function setup(opts) {
     return r;
   };
 
-  const files = { 'package.json': JSON.stringify({ name: opts.pkgName === undefined ? 'hasava-mfe' : opts.pkgName }) };
-  const fsMock = {
-    readFileSync: (p) => {
-      const base = path.basename(p);
-      if (opts.noPkg || !(base in files)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      return files[base];
-    },
-  };
-  return { deps: { execFileSync: execFileSync, fs: fsMock, cwd: '/repo', env: {}, now: NOW }, calls: calls };
+  const deps = { execFileSync: execFileSync, cwd: '/repo', env: {}, now: NOW };
+  if (opts.config) deps.config = opts.config;
+  return { deps: deps, calls: calls };
 }
 
 const MUTATING = /^(fetch|checkout|pull|tag|branch|merge|rebase|stash|reset|commit|push)\b/;
-const mutating = (calls) => calls.map((a) => a.join(' ')).filter((c) => MUTATING.test(c));
+const mutating = (calls) => calls.map((a) => a.join(' ')).filter((c) => MUTATING.test(c) && !/^tag --list\b/.test(c));
 const checks = (res) => res.blockers.map((b) => b.check);
 
-test('happy path: full sequence, derived target, json fields', () => {
+test('happy path: current branch → digital_V2, json fields', () => {
   const s = setup();
   const res = run([], s.deps);
   assert.strictEqual(res.result, 'OK');
   assert.deepStrictEqual(mutating(s.calls), [
     'fetch origin --prune',
-    'checkout digital_V2',
-    'pull --ff-only --no-rebase origin digital_V2',
+    'pull --ff-only --no-rebase',
     'checkout -b ' + TARGET,
     'tag ' + TAG,
   ]);
-  assert.strictEqual(res.sourceBranch, 'digital_V2');
+  assert.strictEqual(res.sourceBranch, SOURCE);
   assert.strictEqual(res.targetBranch, TARGET);
+  assert.strictEqual(res.upstream, 'origin/' + SOURCE);
   assert.strictEqual(res.tag, TAG);
   assert.strictEqual(res.previousHead, SHA);
+  assert.strictEqual(res.previousBranch, SOURCE);
+  assert.match(res.notes.join(' '), /Already on develop – skipping checkout/);
+});
+
+test('defaults come from reference/commit-steps.json', () => {
+  const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'reference', 'commit-steps.json'), 'utf8'));
+  assert.strictEqual(cfg.defaultTarget, 'digital_V2');
+  assert.strictEqual(cfg.defaultSource, null);
+  assert.ok(cfg.protectedBranches.indexOf('digital_V2') === -1);
+
+  const s = setup({ config: { defaultTarget: 'gen2', defaultSource: 'main' }, responses: { 'checkout -b gen2': '' } });
+  const res = run([], s.deps);
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.strictEqual(res.sourceBranch, 'main');
+  assert.strictEqual(res.targetBranch, 'gen2');
+  assert.deepStrictEqual(mutating(s.calls), ['fetch origin --prune', 'checkout main', 'pull --ff-only --no-rebase', 'checkout -b gen2', 'tag ' + TAG]);
+});
+
+test('config without defaultTarget and no --target → BLOCKED', () => {
+  const s = setup({ config: { defaultTarget: null, defaultSource: null } });
+  const res = run([], s.deps);
+  assert.deepStrictEqual(checks(res), ['target-name']);
+  assert.deepStrictEqual(s.calls, []);
+});
+
+test('--source: checkout the source, pull, then branch off it', () => {
+  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': 'main\n' } });
+  const res = run(['--source', SOURCE], s.deps);
+  assert.strictEqual(res.result, 'OK');
+  assert.deepStrictEqual(mutating(s.calls), [
+    'fetch origin --prune',
+    'checkout ' + SOURCE,
+    'pull --ff-only --no-rebase',
+    'checkout -b ' + TARGET,
+    'tag ' + TAG,
+  ]);
   assert.strictEqual(res.previousBranch, 'main');
 });
 
-test('already on source → checkout skipped', () => {
-  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': 'digital_V2\n' } });
-  const res = run([], s.deps);
-  assert.strictEqual(res.result, 'OK');
-  assert.ok(!mutating(s.calls).includes('checkout digital_V2'));
-});
-
-test('source not local → checkout -b --track from origin', () => {
+test('source not local but on origin → checkout -b --track from origin', () => {
   const s = setup({
     localBranches: ['main'],
-    responses: { 'checkout -b digital_V2 --track origin/digital_V2': '' },
+    responses: {
+      'symbolic-ref --short -q HEAD': 'main\n',
+      ['checkout -b ' + SOURCE + ' --track origin/' + SOURCE]: '',
+    },
   });
-  const res = run([], s.deps);
+  const res = run(['--source', SOURCE], s.deps);
   assert.strictEqual(res.result, 'OK');
-  assert.ok(mutating(s.calls).includes('checkout -b digital_V2 --track origin/digital_V2'));
+  assert.strictEqual(res.upstream, 'origin/' + SOURCE);
+  assert.ok(mutating(s.calls).includes('checkout -b ' + SOURCE + ' --track origin/' + SOURCE));
 });
 
-test('--source / --target are passed as single array elements', () => {
+test('source without upstream → pull skipped with a note, still OK', () => {
+  const s = setup({ responses: { ['rev-parse --abbrev-ref --symbolic-full-name ' + SOURCE + '@{upstream}']: fail(128, 'fatal: no upstream configured for branch \'develop\'') } });
+  const res = run([], s.deps);
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.upstream, null);
+  assert.deepStrictEqual(mutating(s.calls), ['fetch origin --prune', 'checkout -b ' + TARGET, 'tag ' + TAG]);
+  assert.match(res.notes.join(' '), /has no upstream – skipping git pull/);
+});
+
+test('no origin at all → fetch and pull skipped with a note, target created locally → OK', () => {
+  const s = setup({
+    responses: {
+      'config --get remote.origin.url': fail(1),
+      'ls-remote --heads origin': fail(128, "fatal: 'origin' does not appear to be a git repository"),
+    },
+  });
+  const res = run([], s.deps);
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.deepStrictEqual(mutating(s.calls), ['checkout -b ' + TARGET, 'tag ' + TAG]);
+  assert.ok(!s.calls.some((a) => a[0] === 'ls-remote'), 'no network call without origin');
+  assert.match(res.notes.join(' '), /No remote named origin – skipping fetch and pull/);
+});
+
+test('no origin + digital_V2 exists locally, HEAD elsewhere → BLOCKED', () => {
+  const s = setup({ localBranches: ['main', SOURCE, TARGET], responses: { 'config --get remote.origin.url': fail(1) } });
+  assert.deepStrictEqual(checks(run([], s.deps)), ['target-exists']);
+});
+
+test('no origin + missing source → BLOCKED suggesting --source', () => {
+  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': 'main\n', 'config --get remote.origin.url': fail(1) } });
+  const res = run(['--source', 'nope'], s.deps);
+  assert.deepStrictEqual(checks(res), ['source-missing']);
+  assert.match(res.blockers[0].message, /--source/);
+});
+
+// ---- tag name already taken (same minute) ----
+
+test('tag exists and points at the source tip → reused with a note, not recreated → OK', () => {
+  const s = setup({ refs: { ['refs/tags/' + TAG]: SHA, ['refs/heads/' + SOURCE]: SHA, HEAD: SHA } });
+  const res = run([], s.deps);
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.deepStrictEqual(mutating(s.calls), ['fetch origin --prune', 'pull --ff-only --no-rebase', 'checkout -b ' + TARGET]);
+  assert.strictEqual(res.tag, TAG);
+  assert.match(res.notes.join(' '), /already exists and points to the same commit .* reusing it/);
+});
+
+test('tag exists and points elsewhere → BLOCKED "wait a minute", nothing runs', () => {
+  const s = setup({ refs: { ['refs/tags/' + TAG]: 'f'.repeat(40), ['refs/heads/' + SOURCE]: SHA } });
+  const res = run([], s.deps);
+  assert.deepStrictEqual(checks(res), ['tag-exists']);
+  assert.match(res.blockers[0].message, /wait a minute/);
+  assert.deepStrictEqual(mutating(s.calls), []);
+});
+
+test('tag matched before pull but pull moved the source → BLOCKED before creating the branch, back to previous', () => {
+  const s = setup({
+    responses: { 'symbolic-ref --short -q HEAD': 'main\n' },
+    refs: { ['refs/tags/' + TAG]: SHA, ['refs/heads/' + SOURCE]: SHA, HEAD: 'e'.repeat(40) },
+  });
+  const res = run(['--source', SOURCE], s.deps);
+  assert.deepStrictEqual(checks(res), ['tag-exists']);
+  assert.deepStrictEqual(mutating(s.calls), ['fetch origin --prune', 'checkout ' + SOURCE, 'pull --ff-only --no-rebase', 'checkout main']);
+});
+
+test('--target / --source are passed as single array elements', () => {
   const s = setup({
     responses: {
       'ls-remote --heads origin': 'aaa\trefs/heads/release/1\n',
+      'rev-parse --abbrev-ref --symbolic-full-name release/1@{upstream}': 'origin/release/1\n',
+      'config --get branch.release/1.remote': 'origin\n',
       'checkout release/1': '',
-      'pull --ff-only --no-rebase origin release/1': '',
-      'rev-list --count origin/release/1..HEAD': '0',
       'checkout -b my/work': '',
     },
     localBranches: ['main', 'release/1'],
   });
   const res = run(['--source', 'release/1', '--target', 'my/work'], s.deps);
-  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
   assert.ok(s.calls.some((a) => a.length === 3 && a[0] === 'checkout' && a[1] === '-b' && a[2] === 'my/work'));
+  assert.ok(s.calls.some((a) => a.length === 2 && a[0] === 'checkout' && a[1] === 'release/1'));
 });
 
-test('dry-run: read-only checks only, prints planned sequence', () => {
+test('dry-run: read-only checks only, prints source → target and planned sequence', () => {
   const s = setup();
   let out = '';
   const code = main(['--dry-run'], s.deps, { stdout: (x) => { out += x; }, stderr: () => {} });
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(mutating(s.calls), []);
+  assert.match(out, /source: develop \(upstream: origin\/develop\) → target: digital_V2/);
   assert.match(out, /→ git fetch origin --prune/);
-  assert.match(out, /→ git pull --ff-only --no-rebase origin digital_V2/);
+  assert.match(out, /→ git pull --ff-only --no-rebase/);
+  assert.match(out, /→ git checkout -b digital_V2/);
   assert.match(out, new RegExp('→ git tag ' + TAG));
   assert.strictEqual(out.trimEnd().split('\n').pop(), 'RESULT: OK');
 });
@@ -145,6 +246,13 @@ test('hostile --target is rejected, never executed', () => {
   const s = setup();
   const res = run(['--target', 'x; rm -rf /'], s.deps);
   assert.strictEqual(res.result, 'BLOCKED');
+  assert.deepStrictEqual(checks(res), ['branch-name']);
+  assert.deepStrictEqual(mutating(s.calls), []);
+});
+
+test('hostile --source is rejected, never executed', () => {
+  const s = setup();
+  const res = run(['--source', '-x;rm'], s.deps);
   assert.deepStrictEqual(checks(res), ['branch-name']);
   assert.deepStrictEqual(mutating(s.calls), []);
 });
@@ -159,37 +267,103 @@ test('dirty tree → BLOCKED with files, no stash', () => {
   assert.deepStrictEqual(mutating(s.calls), []);
 });
 
-test('target exists locally → BLOCKED with -2 suggestion', () => {
-  const s = setup({ localBranches: ['main', 'digital_V2', TARGET] });
+test('digital_V2 exists locally → BLOCKED: probably migrated already, --target hint', () => {
+  const s = setup({ localBranches: ['main', SOURCE, TARGET] });
   const res = run([], s.deps);
   assert.deepStrictEqual(checks(res), ['target-exists']);
-  assert.strictEqual(res.blockers[0].suggestion, TARGET + '-2');
-  assert.match(res.blockers[0].message, /--target feature\/migration-v2-hasava-mfe-20261005-2/);
+  assert.match(res.blockers[0].message, /digital_V2 already exists locally/);
+  assert.match(res.blockers[0].message, /probably migrated already/);
+  assert.match(res.blockers[0].message, /--target/);
+  assert.deepStrictEqual(mutating(s.calls), []);
 });
 
-test('target and -2 exist → suggestion -3', () => {
-  const s = setup({ localBranches: ['main', 'digital_V2', TARGET, TARGET + '-2'] });
-  assert.strictEqual(run([], s.deps).blockers[0].suggestion, TARGET + '-3');
-});
-
-test('target exists on origin only → BLOCKED', () => {
-  const s = setup({ responses: { 'ls-remote --heads origin': 'a\trefs/heads/digital_V2\nb\trefs/heads/' + TARGET + '\n' } });
+test('digital_V2 exists on origin only → BLOCKED', () => {
+  const s = setup({ responses: { 'ls-remote --heads origin': 'a\trefs/heads/' + SOURCE + '\nb\trefs/heads/' + TARGET + '\n' } });
   const res = run([], s.deps);
   assert.deepStrictEqual(checks(res), ['target-exists']);
-  assert.match(res.blockers[0].message, /ב-origin/);
+  assert.match(res.blockers[0].message, /on origin/);
 });
 
-test('source missing on origin → BLOCKED', () => {
-  const s = setup({ responses: { 'ls-remote --heads origin': 'b\trefs/heads/main\n' } });
+const onTarget = (tagList, extra) => setup({
+  localBranches: ['main', SOURCE, TARGET],
+  responses: Object.assign({
+    'symbolic-ref --short -q HEAD': TARGET + '\n',
+    'tag --list migration-start-* --merged HEAD': tagList,
+    ['tag ' + TAG + ' HEAD']: '',
+  }, extra || {}),
+});
+
+test('on digital_V2 with a start tag → NOOP, nothing runs', () => {
+  const s = onTarget('migration-start-20261001-0900\nmigration-start-20261003-1000\n');
   const res = run([], s.deps);
+  assert.strictEqual(res.result, 'NOOP');
+  assert.deepStrictEqual(res.blockers, []);
+  assert.strictEqual(res.tag, 'migration-start-20261003-1000');
+  assert.match(res.notes.join(' '), /this step is already done/);
+  assert.deepStrictEqual(mutating(s.calls), []);
+  assert.ok(!s.calls.some((a) => a[0] === 'ls-remote' || a[0] === 'status'), 'no other checks on the NOOP path');
+});
+
+test('on digital_V2 without a start tag (tag failed earlier) → tag created on HEAD, NOOP', () => {
+  const s = onTarget('');
+  const res = run([], s.deps);
+  assert.strictEqual(res.result, 'NOOP', JSON.stringify(res.blockers));
+  assert.deepStrictEqual(mutating(s.calls), ['tag ' + TAG + ' HEAD']);
+  assert.strictEqual(res.tag, TAG);
+  assert.deepStrictEqual(res.changes.map((c) => c.rule), ['BRANCH.TAG']);
+  assert.match(res.notes.join(' '), /was missing – created migration-start-20261005-1407/);
+});
+
+test('on digital_V2 without a start tag, --dry-run → tag only planned', () => {
+  const s = onTarget('');
+  const res = run(['--dry-run'], s.deps);
+  assert.strictEqual(res.result, 'NOOP');
+  assert.deepStrictEqual(mutating(s.calls), []);
+  assert.deepStrictEqual(res.commands, [{ command: 'git tag ' + TAG + ' HEAD', status: 'planned' }]);
+});
+
+test('on digital_V2, creating the missing tag fails → BLOCKED tag', () => {
+  const s = onTarget('', { ['tag ' + TAG + ' HEAD']: fail(128, 'fatal: cannot lock ref') });
+  const res = run([], s.deps);
+  assert.deepStrictEqual(checks(res), ['tag']);
+});
+
+test('on digital_V2 with a dirty tree → still NOOP (nothing to check out)', () => {
+  const s = onTarget('migration-start-20261001-0900\n', { 'status --porcelain': ' M src/App.jsx\n' });
+  assert.strictEqual(run([], s.deps).result, 'NOOP');
+});
+
+test('--target other name when digital_V2 already exists → OK', () => {
+  const s = setup({ localBranches: ['main', SOURCE, TARGET], responses: { 'checkout -b digital_V2-b': '' } });
+  const res = run(['--target', 'digital_V2-b'], s.deps);
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.ok(mutating(s.calls).includes('checkout -b digital_V2-b'));
+});
+
+test('--source equal to target → BLOCKED', () => {
+  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': 'main\n' } });
+  const res = run(['--source', 'x', '--target', 'x'], s.deps);
+  assert.ok(checks(res).includes('branch-name'));
+});
+
+test('source missing locally and on origin → BLOCKED', () => {
+  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': 'main\n' } });
+  const res = run(['--source', 'nope'], s.deps);
   assert.deepStrictEqual(checks(res), ['source-missing']);
 });
 
-test('detached HEAD → BLOCKED', () => {
+test('detached HEAD → BLOCKED, nothing to branch from', () => {
   const s = setup({ responses: { 'symbolic-ref --short -q HEAD': fail(1) } });
   const res = run([], s.deps);
   assert.deepStrictEqual(checks(res), ['detached-head']);
+  assert.match(res.blockers[0].message, /nothing to branch from/);
   assert.strictEqual(res.previousHead, SHA);
+  assert.deepStrictEqual(mutating(s.calls), []);
+});
+
+test('detached HEAD with --source → still BLOCKED', () => {
+  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': fail(1) } });
+  assert.deepStrictEqual(checks(run(['--source', SOURCE], s.deps)), ['detached-head']);
 });
 
 test('auth failure on ls-remote → BLOCKED kind auth', () => {
@@ -197,7 +371,7 @@ test('auth failure on ls-remote → BLOCKED kind auth', () => {
   const res = run([], s.deps);
   assert.deepStrictEqual(checks(res), ['origin']);
   assert.strictEqual(res.blockers[0].kind, 'auth');
-  assert.match(res.blockers[0].message, /כשל אימות/);
+  assert.match(res.blockers[0].message, /Authentication to origin failed/);
 });
 
 test('auth failure on fetch → BLOCKED, nothing else runs', () => {
@@ -215,22 +389,28 @@ test('ls-remote timeout → BLOCKED kind timeout', () => {
 });
 
 test('diverged pull → BLOCKED, no merge/rebase, back to previous branch', () => {
-  const s = setup({ responses: { 'pull --ff-only --no-rebase origin digital_V2': fail(128, 'hint: Diverging branches can\'t be fast-forwarded\nfatal: Not possible to fast-forward, aborting.') } });
-  const res = run([], s.deps);
+  const s = setup({
+    responses: {
+      'symbolic-ref --short -q HEAD': 'main\n',
+      'pull --ff-only --no-rebase': fail(128, 'hint: Diverging branches can\'t be fast-forwarded\nfatal: Not possible to fast-forward, aborting.'),
+    },
+  });
+  const res = run(['--source', SOURCE], s.deps);
   assert.deepStrictEqual(checks(res), ['diverged']);
+  assert.match(res.blockers[0].message, /origin\/develop have diverged/);
   assert.deepStrictEqual(mutating(s.calls), [
     'fetch origin --prune',
-    'checkout digital_V2',
-    'pull --ff-only --no-rebase origin digital_V2',
+    'checkout ' + SOURCE,
+    'pull --ff-only --no-rebase',
     'checkout main',
   ]);
 });
 
-test('local source ahead of origin → REVIEW', () => {
-  const s = setup({ responses: { 'rev-list --count origin/digital_V2..HEAD': '2\n' } });
+test('local source ahead of upstream → OK with a note (result is only OK|NOOP|BLOCKED)', () => {
+  const s = setup({ responses: { 'rev-list --count @{upstream}..HEAD': '2\n' } });
   const res = run([], s.deps);
-  assert.strictEqual(res.result, 'REVIEW');
-  assert.match(res.notes.join(' '), /2 קומיטים/);
+  assert.strictEqual(res.result, 'OK');
+  assert.match(res.notes.join(' '), /2 commits/);
 });
 
 test('not a git repo → BLOCKED', () => {
@@ -238,33 +418,15 @@ test('not a git repo → BLOCKED', () => {
   assert.deepStrictEqual(checks(run([], s.deps)), ['git-repo']);
 });
 
-test('no package.json name and no --target → BLOCKED', () => {
-  const s = setup({ noPkg: true });
-  assert.deepStrictEqual(checks(run([], s.deps)), ['target-name']);
-});
-
 test('several problems are reported together', () => {
   const s = setup({
-    localBranches: ['main', 'digital_V2', TARGET],
+    localBranches: ['main', SOURCE, TARGET],
     responses: {
       'symbolic-ref --short -q HEAD': fail(1),
       'status --porcelain': '?? a\n',
-      'ls-remote --heads origin': 'b\trefs/heads/main\n',
     },
   });
-  assert.deepStrictEqual(checks(run([], s.deps)).sort(), ['detached-head', 'git-clean', 'source-missing', 'target-exists']);
-});
-
-test('already on the work branch → NOOP', () => {
-  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': TARGET + '\n' } });
-  const res = run([], s.deps);
-  assert.strictEqual(res.result, 'NOOP');
-  assert.deepStrictEqual(mutating(s.calls), []);
-});
-
-test('on a derived work branch from an earlier day → NOOP', () => {
-  const s = setup({ responses: { 'symbolic-ref --short -q HEAD': 'feature/migration-v2-hasava-mfe-20261001\n' } });
-  assert.strictEqual(run([], s.deps).result, 'NOOP');
+  assert.deepStrictEqual(checks(run([], s.deps)).sort(), ['detached-head', 'git-clean', 'target-exists']);
 });
 
 test('crash → exit 1, stderr only', () => {
@@ -274,11 +436,6 @@ test('crash → exit 1, stderr only', () => {
   assert.strictEqual(code, 1);
   assert.strictEqual(out, '');
   assert.match(err, /branch crashed/);
-});
-
-test('slugify', () => {
-  assert.strictEqual(slugify('@ips/hasava-mfe'), 'hasava-mfe');
-  assert.strictEqual(slugify('My Service!'), 'My-Service');
 });
 
 // ---------------------------------------------------------------------------
@@ -296,6 +453,7 @@ function g(cwd, args) {
   return childProcess.execFileSync('git', args, { cwd: cwd, env: GIT_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
+// origin has main + develop; the work clone is on main
 function makeRemoteAndClone() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'branch-test-'));
   const origin = path.join(base, 'origin.git');
@@ -307,50 +465,94 @@ function makeRemoteAndClone() {
   g(seed, ['add', '.']);
   g(seed, ['commit', '-q', '-m', 'init']);
   g(seed, ['push', '-q', 'origin', 'HEAD:main']);
-  g(seed, ['push', '-q', 'origin', 'HEAD:digital_V2']);
+  g(seed, ['push', '-q', 'origin', 'HEAD:' + SOURCE]);
   g(base, ['clone', '-q', origin, work]);
   return { base: base, origin: origin, seed: seed, work: work };
 }
 
+function pushUpstreamCommit(r, branch, file) {
+  g(r.seed, ['checkout', '-q', '-B', branch, 'origin/' + branch]);
+  fs.writeFileSync(path.join(r.seed, file), file);
+  g(r.seed, ['add', '.']);
+  g(r.seed, ['commit', '-q', '-m', file]);
+  g(r.seed, ['push', '-q', 'origin', branch]);
+  return g(r.seed, ['rev-parse', 'HEAD']);
+}
+
 const realDeps = (cwd) => ({ cwd: cwd, now: NOW, env: Object.assign({}, GIT_ENV, { GIT_TERMINAL_PROMPT: '0' }) });
 
-test('integration: creates branch from up-to-date source + tag', { skip: !hasGit }, () => {
+test('integration: creates digital_V2 from the up-to-date current branch + tag', { skip: !hasGit }, () => {
   const r = makeRemoteAndClone();
-  // new commit on origin/digital_V2 that the work clone does not have yet
-  g(r.seed, ['checkout', '-q', '-b', 'digital_V2']);
-  fs.writeFileSync(path.join(r.seed, 'new.txt'), 'x');
-  g(r.seed, ['add', '.']);
-  g(r.seed, ['commit', '-q', '-m', 'upstream']);
-  g(r.seed, ['push', '-q', 'origin', 'digital_V2']);
-  const upstreamSha = g(r.seed, ['rev-parse', 'HEAD']);
+  const upstreamSha = pushUpstreamCommit(r, 'main', 'new.txt');
   const before = g(r.work, ['rev-parse', 'HEAD']);
 
   const res = run([], realDeps(r.work));
   assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.strictEqual(res.sourceBranch, 'main');
   assert.strictEqual(res.previousHead, before);
   assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), TARGET);
   assert.strictEqual(g(r.work, ['rev-parse', 'HEAD']), upstreamSha);
   assert.strictEqual(g(r.work, ['rev-parse', TAG + '^{commit}']), upstreamSha);
 
-  // second run → NOOP
-  assert.strictEqual(run([], realDeps(r.work)).result, 'NOOP');
+  // second run while on digital_V2 → NOOP, nothing new
+  const refs = g(r.work, ['show-ref']);
+  const again = run([], Object.assign(realDeps(r.work), { now: new Date(NOW.getTime() + 60000) }));
+  assert.strictEqual(again.result, 'NOOP', JSON.stringify(again.blockers));
+  assert.strictEqual(again.tag, TAG);
+  assert.strictEqual(g(r.work, ['show-ref']), refs);
+
+  // digital_V2 exists but HEAD is elsewhere → BLOCKED
+  g(r.work, ['checkout', '-q', 'main']);
+  const elsewhere = run([], Object.assign(realDeps(r.work), { now: new Date(NOW.getTime() + 120000) }));
+  assert.deepStrictEqual(elsewhere.blockers.map((b) => b.check), ['target-exists']);
+  assert.match(elsewhere.blockers[0].message, /probably migrated already/);
+});
+
+test('integration: branch created but tag missing → resume creates the tag, NOOP', { skip: !hasGit }, () => {
+  const r = makeRemoteAndClone();
+  g(r.work, ['checkout', '-q', '-b', TARGET]); // as if the tag step failed after create-branch
+  const head = g(r.work, ['rev-parse', 'HEAD']);
+  const res = run([], realDeps(r.work));
+  assert.strictEqual(res.result, 'NOOP', JSON.stringify(res.blockers));
+  assert.strictEqual(g(r.work, ['rev-parse', TAG + '^{commit}']), head);
+  assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), TARGET);
+});
+
+test('integration: --source from origin only (no local branch)', { skip: !hasGit }, () => {
+  const r = makeRemoteAndClone();
+  const upstreamSha = pushUpstreamCommit(r, SOURCE, 'dev.txt');
+  const res = run(['--source', SOURCE], realDeps(r.work));
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), TARGET);
+  assert.strictEqual(g(r.work, ['rev-parse', 'HEAD']), upstreamSha);
+});
+
+test('integration: local branch without upstream → OK, pull skipped', { skip: !hasGit }, () => {
+  const r = makeRemoteAndClone();
+  g(r.work, ['checkout', '-q', '-b', 'local-only']);
+  fs.writeFileSync(path.join(r.work, 'l.txt'), 'l');
+  g(r.work, ['add', '.']);
+  g(r.work, ['commit', '-q', '-m', 'local']);
+  const localSha = g(r.work, ['rev-parse', 'HEAD']);
+
+  const res = run([], realDeps(r.work));
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.strictEqual(res.upstream, null);
+  assert.match(res.notes.join(' '), /no upstream/);
+  assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), TARGET);
+  assert.strictEqual(g(r.work, ['rev-parse', 'HEAD']), localSha);
 });
 
 test('integration: diverged source → BLOCKED, back on previous branch, nothing created', { skip: !hasGit }, () => {
   const r = makeRemoteAndClone();
-  g(r.work, ['checkout', '-q', 'digital_V2']);
+  g(r.work, ['checkout', '-q', SOURCE]);
   fs.writeFileSync(path.join(r.work, 'local.txt'), 'l');
   g(r.work, ['add', '.']);
   g(r.work, ['commit', '-q', '-m', 'local']);
   g(r.work, ['checkout', '-q', 'main']);
+  pushUpstreamCommit(r, SOURCE, 'remote.txt');
 
-  g(r.seed, ['checkout', '-q', '-b', 'digital_V2']);
-  fs.writeFileSync(path.join(r.seed, 'remote.txt'), 'r');
-  g(r.seed, ['add', '.']);
-  g(r.seed, ['commit', '-q', '-m', 'remote']);
-  g(r.seed, ['push', '-q', 'origin', 'digital_V2']);
-
-  const res = run([], realDeps(r.work));
+  const res = run(['--source', SOURCE], realDeps(r.work));
   assert.strictEqual(res.result, 'BLOCKED');
   assert.deepStrictEqual(res.blockers.map((b) => b.check), ['diverged']);
   assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), 'main');
@@ -358,22 +560,39 @@ test('integration: diverged source → BLOCKED, back on previous branch, nothing
   assert.strictEqual(g(r.work, ['tag', '--list', TAG]), '');
 });
 
-test('integration: existing local target → BLOCKED with suggestion, dry-run changes nothing', { skip: !hasGit }, () => {
+test('integration: digital_V2 on origin → BLOCKED, dry-run with --target changes nothing', { skip: !hasGit }, () => {
   const r = makeRemoteAndClone();
-  g(r.work, ['branch', TARGET]);
+  g(r.seed, ['push', '-q', 'origin', 'HEAD:' + TARGET]);
   const res = run([], realDeps(r.work));
   assert.deepStrictEqual(res.blockers.map((b) => b.check), ['target-exists']);
-  assert.strictEqual(res.blockers[0].suggestion, TARGET + '-2');
 
   const refsBefore = g(r.work, ['show-ref']);
-  const dry = run(['--dry-run', '--target', TARGET + '-2'], realDeps(r.work));
-  assert.strictEqual(dry.result, 'OK');
-  assert.strictEqual(dry.commands.length, 5);
+  const dry = run(['--dry-run', '--target', 'digital_V2-retry'], realDeps(r.work));
+  assert.strictEqual(dry.result, 'OK', JSON.stringify(dry.blockers));
+  assert.strictEqual(dry.commands.length, 4);
   assert.strictEqual(g(r.work, ['show-ref']), refsBefore);
   assert.strictEqual(g(r.work, ['symbolic-ref', '--short', 'HEAD']), 'main');
 });
 
-test('integration: missing source on origin → BLOCKED', { skip: !hasGit }, () => {
+test('integration: repo without origin → digital_V2 created locally with tag, then NOOP', { skip: !hasGit }, () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'branch-test-'));
+  g(base, ['init', '-q', '-b', 'try-skill', '.']);
+  fs.writeFileSync(path.join(base, 'a.txt'), 'a');
+  g(base, ['add', '.']);
+  g(base, ['commit', '-q', '-m', 'init']);
+  const sha = g(base, ['rev-parse', 'HEAD']);
+
+  const res = run([], realDeps(base));
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.strictEqual(res.sourceBranch, 'try-skill');
+  assert.strictEqual(res.previousHead, sha);
+  assert.match(res.notes.join(' '), /No remote named origin/);
+  assert.strictEqual(g(base, ['symbolic-ref', '--short', 'HEAD']), TARGET);
+  assert.strictEqual(g(base, ['rev-parse', TAG + '^{commit}']), sha);
+  assert.strictEqual(run([], realDeps(base)).result, 'NOOP');
+});
+
+test('integration: missing source → BLOCKED', { skip: !hasGit }, () => {
   const r = makeRemoteAndClone();
   const res = run(['--source', 'nope'], realDeps(r.work));
   assert.deepStrictEqual(res.blockers.map((b) => b.check), ['source-missing']);

@@ -10,7 +10,6 @@ const SCRIPT = 'preflight';
 const NETWORK_TIMEOUT_MS = 15000;
 const LOCAL_TIMEOUT_MS = 15000;
 const MIN_NODE_MAJOR = 18;
-const TARGET_BRANCH = 'digital_V2';
 const MAX_LISTED_FILES = 30;
 const TARGETS_FILE = path.join(__dirname, '..', 'reference', 'versions.json');
 
@@ -136,7 +135,7 @@ function check(id, title, status, message, extra) {
 }
 
 function skipped(id, title, reason) {
-  return check(id, title, 'warn', 'דולג – ' + reason, { skipped: true });
+  return check(id, title, 'warn', 'skipped – ' + reason, { skipped: true });
 }
 
 async function runPreflight(options, overrides) {
@@ -160,7 +159,7 @@ async function runPreflight(options, overrides) {
 
   const addBlocker = (checkId, message, extra) => blockers.push(Object.assign({ check: checkId, message: message }, extra || {}));
 
-  if (options.dryRun) notes.push('preflight הוא קריאה בלבד – ל-‎--dry-run אין השפעה');
+  if (options.dryRun) notes.push('preflight is read-only – --dry-run has no effect');
 
   // 1. git repo
   let isRepo = false;
@@ -171,9 +170,9 @@ async function runPreflight(options, overrides) {
       checks.push(check('git-repo', 'git repo', 'ok', deps.cwd));
     } else {
       let msg;
-      if (r.errno === 'ENOENT') msg = 'git לא מותקן או לא נמצא ב-PATH';
-      else if (r.timedOut) msg = 'git rev-parse לא הגיב תוך ' + seconds(deps.localTimeoutMs) + ' שניות';
-      else msg = 'התיקייה ' + deps.cwd + ' אינה git repo' + (firstLine(r.stderr) ? ' (' + firstLine(r.stderr) + ')' : '');
+      if (r.errno === 'ENOENT') msg = 'git is not installed or not on PATH';
+      else if (r.timedOut) msg = 'git rev-parse did not respond within ' + seconds(deps.localTimeoutMs) + ' seconds';
+      else msg = 'The folder ' + deps.cwd + ' is not a git repo' + (firstLine(r.stderr) ? ' (' + firstLine(r.stderr) + ')' : '');
       checks.push(check('git-repo', 'git repo', 'blocked', msg));
       addBlocker('git-repo', msg);
     }
@@ -181,46 +180,46 @@ async function runPreflight(options, overrides) {
 
   // 1a. detached HEAD
   if (!isRepo) {
-    checks.push(skipped('git-branch', 'בראנץ\' נוכחי', 'אין git repo'));
+    checks.push(skipped('git-branch', 'Current branch', 'no git repo'));
   } else {
     const r = await git(['symbolic-ref', '--short', '-q', 'HEAD']);
     if (r.ok && r.stdout.trim()) {
       environment.currentBranch = r.stdout.trim();
-      checks.push(check('git-branch', 'בראנץ\' נוכחי', 'ok', environment.currentBranch));
+      checks.push(check('git-branch', 'Current branch', 'ok', environment.currentBranch));
     } else if (r.code === 1) {
       const sha = await git(['rev-parse', '--short', 'HEAD']);
       const at = sha.ok && sha.stdout.trim() ? ' (' + sha.stdout.trim() + ')' : '';
-      const msg = 'HEAD במצב detached' + at + ' – עבור לבראנץ\' לפני ההסבה';
-      checks.push(check('git-branch', 'בראנץ\' נוכחי', 'blocked', msg));
+      const msg = 'HEAD is detached' + at + ' – switch to a branch before migrating';
+      checks.push(check('git-branch', 'Current branch', 'blocked', msg));
       addBlocker('git-branch', msg, { detached: true });
     } else {
-      const msg = 'לא ניתן לזהות את הבראנץ\' הנוכחי' + (firstLine(r.stderr) ? ': ' + firstLine(r.stderr) : '');
-      checks.push(check('git-branch', 'בראנץ\' נוכחי', 'blocked', msg));
+      const msg = 'Cannot determine the current branch' + (firstLine(r.stderr) ? ': ' + firstLine(r.stderr) : '');
+      checks.push(check('git-branch', 'Current branch', 'blocked', msg));
       addBlocker('git-branch', msg);
     }
   }
 
   // 2. clean working tree
   if (!isRepo) {
-    checks.push(skipped('git-clean', 'עץ עבודה נקי', 'אין git repo'));
+    checks.push(skipped('git-clean', 'Clean working tree', 'no git repo'));
   } else {
     const r = await git(['status', '--porcelain']);
     if (!r.ok) {
       const msg = r.timedOut
-        ? 'git status לא הגיב תוך ' + seconds(deps.localTimeoutMs) + ' שניות'
-        : 'git status נכשל: ' + (firstLine(r.stderr) || r.message);
-      checks.push(check('git-clean', 'עץ עבודה נקי', 'blocked', msg));
+        ? 'git status did not respond within ' + seconds(deps.localTimeoutMs) + ' seconds'
+        : 'git status failed: ' + (firstLine(r.stderr) || r.message);
+      checks.push(check('git-clean', 'Clean working tree', 'blocked', msg));
       addBlocker('git-clean', msg);
     } else {
       // לא לעשות trim לכל השורה – הרווח המוביל הוא חלק מקוד הסטטוס (" M file")
       const files = r.stdout.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim());
       if (files.length === 0) {
-        checks.push(check('git-clean', 'עץ עבודה נקי', 'ok', 'אין שינויים פתוחים'));
+        checks.push(check('git-clean', 'Clean working tree', 'ok', 'no uncommitted changes'));
       } else {
-        const msg = 'יש ' + files.length + ' קבצים עם שינויים שלא נשמרו – בצע commit או stash';
+        const msg = files.length + ' files have uncommitted changes – commit or stash them';
         const lines = files.slice(0, MAX_LISTED_FILES);
-        if (files.length > MAX_LISTED_FILES) lines.push('... ועוד ' + (files.length - MAX_LISTED_FILES));
-        checks.push(check('git-clean', 'עץ עבודה נקי', 'blocked', msg, { lines: lines }));
+        if (files.length > MAX_LISTED_FILES) lines.push('... and ' + (files.length - MAX_LISTED_FILES) + ' more');
+        checks.push(check('git-clean', 'Clean working tree', 'blocked', msg, { lines: lines }));
         addBlocker('git-clean', msg, { files: files });
       }
     }
@@ -232,28 +231,28 @@ async function runPreflight(options, overrides) {
     let pkg = null;
     let msg = null;
     if (!deps.fs.existsSync(pkgPath)) {
-      msg = 'package.json לא נמצא בשורש (' + deps.cwd + ')';
+      msg = 'package.json not found in the root (' + deps.cwd + ')';
     } else {
       try {
         pkg = JSON.parse(deps.fs.readFileSync(pkgPath, 'utf8'));
       } catch (err) {
-        msg = 'package.json אינו JSON תקין: ' + err.message;
+        msg = 'package.json is not valid JSON: ' + err.message;
       }
     }
     if (pkg && typeof pkg.name === 'string') environment.serviceName = pkg.name;
     if (pkg && !msg) {
       const react = pkg.dependencies && pkg.dependencies.react;
       if (!react) {
-        msg = 'react לא מופיע ב-dependencies של package.json';
-        if (pkg.devDependencies && pkg.devDependencies.react) msg += ' (מופיע רק ב-devDependencies)';
+        msg = 'react is not in the dependencies of package.json';
+        if (pkg.devDependencies && pkg.devDependencies.react) msg += ' (it is only in devDependencies)';
       } else {
         const major = parseInt((String(react).match(/\d+/) || [])[0], 10);
         if (major >= 18) {
-          const warn = 'react כבר בגרסה ' + react + ' – ייתכן שהשירות כבר הוסב';
+          const warn = 'react is already at ' + react + ' – the service may already be migrated';
           checks.push(check('package-json', 'package.json', 'warn', warn));
           notes.push(warn);
         } else {
-          checks.push(check('package-json', 'package.json', 'ok', (pkg.name || '(ללא name)') + ', react ' + react));
+          checks.push(check('package-json', 'package.json', 'ok', (pkg.name || '(no name)') + ', react ' + react));
         }
       }
     }
@@ -269,7 +268,7 @@ async function runPreflight(options, overrides) {
     if (major >= MIN_NODE_MAJOR) {
       checks.push(check('node', 'Node', 'ok', 'v' + String(deps.nodeVersion).replace(/^v/, '')));
     } else {
-      const msg = 'Node ' + deps.nodeVersion + ' – נדרש ' + MIN_NODE_MAJOR + ' ומעלה';
+      const msg = 'Node ' + deps.nodeVersion + ' – version ' + MIN_NODE_MAJOR + ' or higher is required';
       checks.push(check('node', 'Node', 'blocked', msg));
       addBlocker('node', msg);
     }
@@ -282,7 +281,7 @@ async function runPreflight(options, overrides) {
     const reg = await npm(['config', 'get', 'registry']);
     if (reg.ok && reg.stdout.trim()) environment.registryUrl = reg.stdout.trim();
   }
-  const registryLabel = environment.registryUrl || 'ה-registry המוגדר';
+  const registryLabel = environment.registryUrl || 'the configured registry';
 
   let targets = deps.targets;
   let targetsError = null;
@@ -290,11 +289,11 @@ async function runPreflight(options, overrides) {
     try {
       targets = loadTargets();
     } catch (err) {
-      targetsError = 'לא ניתן לטעון את ' + TARGETS_FILE + ': ' + err.message;
+      targetsError = 'Cannot load ' + TARGETS_FILE + ': ' + err.message;
     }
   }
 
-  // Network checks run concurrently; results are reported in fixed order.
+  // Registry checks: ping, then all target versions concurrently; results are reported in fixed order.
   const registryChain = (async () => {
     // 5. npm ping
     const ping = await npm(['ping'], deps.networkTimeoutMs);
@@ -303,8 +302,8 @@ async function runPreflight(options, overrides) {
       pingCheck = check('npm-ping', 'npm ping', 'ok', registryLabel);
     } else {
       const msg = ping.timedOut
-        ? 'npm ping לא הגיב תוך ' + netSec + ' שניות – אין גישה ל-' + registryLabel
-        : 'npm ping ל-' + registryLabel + ' נכשל: ' + (firstLine(ping.stderr) || firstLine(ping.stdout) || ping.message);
+        ? 'npm ping did not respond within ' + netSec + ' seconds – no access to ' + registryLabel
+        : 'npm ping to ' + registryLabel + ' failed: ' + (firstLine(ping.stderr) || firstLine(ping.stdout) || ping.message);
       pingCheck = check('npm-ping', 'npm ping', 'blocked', msg, { timeout: !!ping.timedOut });
     }
 
@@ -312,27 +311,27 @@ async function runPreflight(options, overrides) {
     let versionsCheck;
     let versionBlockers = [];
     if (targetsError) {
-      versionsCheck = check('target-versions', 'גרסאות יעד', 'blocked', targetsError);
+      versionsCheck = check('target-versions', 'Target versions', 'blocked', targetsError);
       versionBlockers.push({ message: targetsError });
     } else if (!ping.ok) {
-      versionsCheck = skipped('target-versions', 'גרסאות יעד', 'ה-registry אינו זמין');
+      versionsCheck = skipped('target-versions', 'Target versions', 'the registry is not available');
     } else {
       const results = await Promise.all(targetSpecs(targets).map(async (spec) => {
         const ref = spec.version ? spec.name + '@' + spec.version : spec.name;
         const r = await npm(['view', ref, 'version'], deps.networkTimeoutMs);
-        if (r.timedOut) return { ref: ref, spec: spec, ok: false, message: ref + ': לא הגיב תוך ' + netSec + ' שניות', timeout: true };
+        if (r.timedOut) return { ref: ref, spec: spec, ok: false, message: ref + ': did not respond within ' + netSec + ' seconds', timeout: true };
         if (!r.ok) {
           const text = r.stderr + '\n' + r.stdout;
           const notFound = /E404|404 Not Found|is not in this registry/i.test(text);
           return {
             ref: ref, spec: spec, ok: false,
-            message: ref + ': ' + (notFound ? 'החבילה לא נמצאה ב-registry' : 'npm view נכשל – ' + (firstLine(r.stderr) || r.message)),
+            message: ref + ': ' + (notFound ? 'package not found in the registry' : 'npm view failed – ' + (firstLine(r.stderr) || r.message)),
           };
         }
         const found = r.stdout.split(/\s+/).map((s) => s.replace(/^'|'$/g, '')).filter(Boolean);
         // npm view מחזיר פלט ריק וקוד 0 כשהגרסה המבוקשת לא קיימת
         if (found.length === 0 || (spec.version && found.indexOf(spec.version) === -1)) {
-          return { ref: ref, spec: spec, ok: false, message: ref + ': הגרסה אינה זמינה ב-registry' };
+          return { ref: ref, spec: spec, ok: false, message: ref + ': this version is not available in the registry' };
         }
         return { ref: ref, spec: spec, ok: true, found: found[found.length - 1] };
       }));
@@ -341,9 +340,9 @@ async function runPreflight(options, overrides) {
         ? SYMBOLS.ok + ' ' + (x.spec.version ? x.ref : x.ref + ' (' + x.found + ')')
         : SYMBOLS.blocked + ' ' + x.message));
       if (failed.length === 0) {
-        versionsCheck = check('target-versions', 'גרסאות יעד', 'ok', results.length + ' חבילות זמינות', { lines: lines });
+        versionsCheck = check('target-versions', 'Target versions', 'ok', results.length + ' packages available', { lines: lines });
       } else {
-        versionsCheck = check('target-versions', 'גרסאות יעד', 'blocked', failed.length + ' מתוך ' + results.length + ' חבילות אינן זמינות', { lines: lines });
+        versionsCheck = check('target-versions', 'Target versions', 'blocked', failed.length + ' of ' + results.length + ' packages are not available', { lines: lines });
         versionBlockers = failed.map((x) => ({
           message: x.message,
           package: x.spec.name,
@@ -355,34 +354,12 @@ async function runPreflight(options, overrides) {
     return { pingCheck: pingCheck, versionsCheck: versionsCheck, versionBlockers: versionBlockers };
   })();
 
-  const remoteBranch = (async () => {
-    // 7. digital_V2 on origin
-    const title = 'origin/' + TARGET_BRANCH;
-    if (!isRepo) return skipped('remote-branch', title, 'אין git repo');
-    const r = await git(['ls-remote', '--heads', 'origin', TARGET_BRANCH], deps.networkTimeoutMs);
-    if (r.timedOut) {
-      return check('remote-branch', title, 'blocked', 'git ls-remote לא הגיב תוך ' + netSec + ' שניות – אין גישה ל-origin', { timeout: true });
-    }
-    if (!r.ok) {
-      return check('remote-branch', title, 'blocked', 'git ls-remote origin נכשל: ' + (firstLine(r.stderr) || r.message));
-    }
-    // ls-remote מתאים גם לסיומת (refs/heads/x/digital_V2), לכן בודקים התאמה מדויקת
-    const exists = r.stdout.split(/\r?\n/).some((l) => l.split('\t')[1] === 'refs/heads/' + TARGET_BRANCH);
-    return exists
-      ? check('remote-branch', title, 'ok', 'קיים')
-      : check('remote-branch', title, 'blocked', 'הבראנץ\' ' + TARGET_BRANCH + ' לא קיים ב-origin');
-  })();
-
-  const net = await Promise.all([registryChain, remoteBranch]);
-  const reg = net[0];
-  const remote = net[1];
+  const reg = await registryChain;
 
   checks.push(reg.pingCheck);
   if (reg.pingCheck.status === 'blocked') addBlocker('npm-ping', reg.pingCheck.message, { timeout: reg.pingCheck.timeout });
   checks.push(reg.versionsCheck);
   reg.versionBlockers.forEach((b) => addBlocker('target-versions', b.message, b));
-  checks.push(remote);
-  if (remote.status === 'blocked') addBlocker('remote-branch', remote.message, { timeout: !!remote.timeout });
 
   return {
     script: SCRIPT,
@@ -397,18 +374,18 @@ async function runPreflight(options, overrides) {
 }
 
 function formatText(result) {
-  const lines = ['preflight – בדיקות סביבה לפני הסבה', ''];
+  const lines = ['preflight – environment checks before migration', ''];
   result.checks.forEach((c) => {
     lines.push(SYMBOLS[c.status] + ' ' + c.title + ': ' + c.message);
     (c.lines || []).forEach((l) => lines.push('    ' + l));
   });
   lines.push('');
   const env = result.environment;
-  lines.push('סביבה: node ' + env.nodeVersion + ', npm ' + (env.npmVersion || '?') +
-    ', registry ' + (env.registryUrl || '?') + ', בראנץ\' ' + (env.currentBranch || '?') +
-    ', שירות ' + (env.serviceName || '?'));
-  result.notes.forEach((n) => lines.push('הערה: ' + n));
-  if (result.blockers.length) lines.push(result.blockers.length + ' חוסמים');
+  lines.push('Environment: node ' + env.nodeVersion + ', npm ' + (env.npmVersion || '?') +
+    ', registry ' + (env.registryUrl || '?') + ', branch ' + (env.currentBranch || '?') +
+    ', service ' + (env.serviceName || '?'));
+  result.notes.forEach((n) => lines.push('Note: ' + n));
+  if (result.blockers.length) lines.push(result.blockers.length + ' blockers');
   lines.push('RESULT: ' + result.result);
   return lines.join('\n') + '\n';
 }
@@ -445,5 +422,4 @@ module.exports = {
   targetSpecs: targetSpecs,
   exactVersion: exactVersion,
   loadTargets: loadTargets,
-  TARGET_BRANCH: TARGET_BRANCH,
 };

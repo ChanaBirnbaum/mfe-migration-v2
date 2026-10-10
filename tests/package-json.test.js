@@ -56,7 +56,7 @@ test('golden: CRLF + 4 spaces, unsorted block, react only in devDependencies, @t
   const out = pkgOf(root);
   assert.strictEqual(out, toCrlf(read('crlf-dev-only', 'after.json')));
   assert.ok(!/[^\r]\n/.test(out), 'no bare LF');
-  const devNotes = res.notes.filter((n) => /רק ב-devDependencies/.test(n));
+  const devNotes = res.notes.filter((n) => /only in devDependencies/.test(n));
   assert.strictEqual(devNotes.length, 3); // react, react-dom, react-router-dom
 });
 
@@ -65,7 +65,7 @@ test('golden: no icons / no router anywhere → neither added; version inserted 
   const res = run([], deps(root));
   assert.strictEqual(res.result, 'OK');
   assert.strictEqual(pkgOf(root), read('no-icons', 'after.json'));
-  assert.ok(res.notes.some((n) => /^react-router-dom לא נוסף/.test(n)));
+  assert.ok(res.notes.some((n) => /^react-router-dom not added/.test(n)));
 });
 
 test('every golden "after" is idempotent', () => {
@@ -178,14 +178,14 @@ test('router: not declared, inventory shows router imports → added', () => {
   const root = repo(MINI, { routerImports: [{ file: 'src/App.jsx', line: 2, module: 'react-router-dom', names: ['BrowserRouter'] }] });
   const res = run([], deps(root));
   assert.strictEqual(routerOf(root), '^6.30.1');
-  assert.ok(res.changes.some((c) => c.rule === 'PKG.ADD' && /^react-router-dom \^6\.30\.1 \(בשימוש לפי inventory\)$/.test(c.detail)));
+  assert.ok(res.changes.some((c) => c.rule === 'PKG.ADD' && /^react-router-dom \^6\.30\.1 \(used according to inventory\)$/.test(c.detail)));
 });
 
 test('router: not declared, inventory shows no router imports → skipped with a note', () => {
   const root = repo(MINI, { routerImports: [] });
   const res = run([], deps(root));
   assert.strictEqual(routerOf(root), undefined);
-  assert.ok(res.notes.includes('react-router-dom לא נוסף – אינו מוצהר ב-package.json והמלאי לא מראה בו שימוש'));
+  assert.ok(res.notes.includes('react-router-dom not added – it is not declared in package.json and the inventory shows no usage'));
   assert.ok(!res.changes.some((c) => /react-router-dom/.test(c.detail)));
 });
 
@@ -194,7 +194,7 @@ test('router: not declared, no inventory (or inventory without routerImports) �
     const root = repo(MINI, inv);
     const res = run([], deps(root));
     assert.strictEqual(routerOf(root), undefined);
-    assert.ok(res.notes.some((n) => /^react-router-dom לא נוסף – .*scan\.js/.test(n)));
+    assert.ok(res.notes.some((n) => /^react-router-dom not added – .*scan\.js/.test(n)));
   });
 });
 
@@ -202,12 +202,12 @@ test('router: already declared → updated even when the inventory shows no use 
   const root = repo(read('typical', 'before.json'), { routerImports: [] });
   const res = run([], deps(root));
   assert.strictEqual(routerOf(root), '^6.30.1');
-  assert.ok(!res.notes.some((n) => /react-router-dom לא נוסף/.test(n)));
+  assert.ok(!res.notes.some((n) => /react-router-dom not added/.test(n)));
 });
 
 // ---- pickers ----
 
-const PICKERS_REASON = 'מעבר מ-pickers v3/v5 ל-x-date-pickers v9 — שינויי API נרחבים, דורש בדיקה ידנית';
+const PICKERS_REASON = 'Moving from pickers v3/v5 to x-date-pickers v9 — extensive API changes, needs manual review';
 
 test('pickers: upgrade + removal are review, one manual item per file from inventory, REVIEW', () => {
   const root = repo(read('typical', 'before.json'), {
@@ -246,7 +246,7 @@ test('pickers: no inventory → one manual item on package.json pointing to scan
   assert.strictEqual(res.result, 'REVIEW');
   assert.strictEqual(res.manual.length, 1);
   assert.strictEqual(res.manual[0].file, 'package.json');
-  assert.match(res.manual[0].reason, /^מעבר מ-pickers v3\/v5 ל-x-date-pickers v9 — .*scan\.js/);
+  assert.match(res.manual[0].reason, /^Moving from pickers v3\/v5 to x-date-pickers v9 — .*scan\.js/);
 });
 
 test('pickers: x-date-pickers only added (never declared) → stays auto, no manual', () => {
@@ -269,7 +269,7 @@ test('package.json with a comment / trailing comma (TS parser accepts, JSON.pars
     assert.strictEqual(code, 0);
     const res = JSON.parse(out);
     assert.strictEqual(res.result, 'BLOCKED');
-    assert.match(res.blockers[0].message, /^package\.json: הקובץ המקורי אינו JSON תקין \(.+\) – כנראה הערה או פסיק מיותר.*הקובץ לא נכתב$/);
+    assert.match(res.blockers[0].message, /^package\.json: the original file is not valid JSON \(.+\) – probably a comment or a trailing comma.*The file was not written$/);
     assert.deepStrictEqual(res.changes, []);
     assert.deepStrictEqual(res.manual, []);
     assert.strictEqual(pkgOf(root), text);

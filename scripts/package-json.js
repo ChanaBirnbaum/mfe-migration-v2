@@ -10,7 +10,7 @@ const path = require('path');
 const SCRIPT = 'package-json';
 const VERSIONS_FILE = path.join(__dirname, '..', 'reference', 'versions.json');
 const SCAN_RULES_FILE = path.join(__dirname, '..', 'reference', 'scan-rules.json');
-const PICKERS_REASON = 'מעבר מ-pickers v3/v5 ל-x-date-pickers v9 — שינויי API נרחבים, דורש בדיקה ידנית';
+const PICKERS_REASON = 'Moving from pickers v3/v5 to x-date-pickers v9 — extensive API changes, needs manual review';
 const DEFAULT_INVENTORY = '.migration/inventory.json';
 const NPM_TIMEOUT_MS = 15000;
 
@@ -24,10 +24,10 @@ function parseArgs(argv) {
     else if (a === '--json') opts.json = true;
     else if (a === '--inventory') {
       const v = argv[i + 1];
-      if (v === undefined || v.startsWith('--')) opts.errors.push('‎--inventory דורש נתיב');
+      if (v === undefined || v.startsWith('--')) opts.errors.push('--inventory requires a path');
       else { opts.inventory = v; i++; }
     } else if (a.startsWith('--inventory=')) opts.inventory = a.slice('--inventory='.length);
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   }
   return opts;
 }
@@ -46,11 +46,11 @@ function createEditor(ts, original) {
     const sf = ts.parseJsonText('package.json', text);
     const diags = sf.parseDiagnostics || [];
     if (diags.length) {
-      throw new PkgError('package.json אינו JSON תקין: ' + ts.flattenDiagnosticMessageText(diags[0].messageText, '\n'));
+      throw new PkgError('package.json is not valid JSON: ' + ts.flattenDiagnosticMessageText(diags[0].messageText, '\n'));
     }
     const st = sf.statements[0];
     const root = st && st.expression;
-    if (!root || root.kind !== ts.SyntaxKind.ObjectLiteralExpression) throw new PkgError('package.json אינו אובייקט JSON');
+    if (!root || root.kind !== ts.SyntaxKind.ObjectLiteralExpression) throw new PkgError('package.json is not a JSON object');
     return { sf: sf, root: root };
   }
 
@@ -180,7 +180,7 @@ function defaultNpmView(name) {
     ? cp.execFileSync('npm view ' + name + ' version', [], Object.assign({ shell: true }, opts))
     : cp.execFileSync('npm', ['view', name, 'version'], opts);
   const v = String(out).trim().split(/\s+/).pop().replace(/^'|'$/g, '');
-  if (!/^\d+\.\d+\.\d+/.test(v)) throw new Error('תשובה לא צפויה מ-npm view: ' + out);
+  if (!/^\d+\.\d+\.\d+/.test(v)) throw new Error('Unexpected answer from npm view: ' + out);
   return v;
 }
 
@@ -205,7 +205,7 @@ function run(argv, overrides) {
   try {
     ts = deps.ts || require('ts-morph').ts;
   } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
 
   let versions;
@@ -214,7 +214,7 @@ function run(argv, overrides) {
     versions = JSON.parse(require('fs').readFileSync(VERSIONS_FILE, 'utf8'));
     pickerPrefixes = JSON.parse(require('fs').readFileSync(SCAN_RULES_FILE, 'utf8')).pickerModulePrefixes;
   } catch (err) {
-    return blocked('לא ניתן לטעון את reference/versions.json / scan-rules.json: ' + err.message);
+    return blocked('Cannot load reference/versions.json / scan-rules.json: ' + err.message);
   }
   const isPicker = (name) => pickerPrefixes.some((p) => name === p || name.startsWith(p + '/'));
   const inventory = readInventory(deps.fs, path.resolve(deps.cwd, opts.inventory));
@@ -224,7 +224,7 @@ function run(argv, overrides) {
   try {
     original = deps.fs.readFileSync(pkgPath, 'utf8');
   } catch (err) {
-    return blocked('לא ניתן לקרוא את package.json: ' + err.message);
+    return blocked('Cannot read package.json: ' + err.message);
   }
 
   let ed;
@@ -248,7 +248,7 @@ function run(argv, overrides) {
 
   if (!ed.has(D)) {
     ed.addBlock(D, { afterKey: ed.keys(null).indexOf('version') !== -1 ? 'version' : 'name' });
-    change('PKG.ADD_BLOCK', 'נוצר בלוק dependencies');
+    change('PKG.ADD_BLOCK', 'created a dependencies block');
   }
 
   const iconsV4Declared = inDeps('@material-ui/icons') || inDev('@material-ui/icons');
@@ -256,7 +256,7 @@ function run(argv, overrides) {
   // 1. remove @material-ui/*
   versions.remove.forEach((name) => {
     if (ed.remove(D, name)) change('PKG.REMOVE', name, name);
-    if (inDev(name)) res.notes.push(name + ' נמצא ב-devDependencies – לא הוסר (מחוץ להיקף)');
+    if (inDev(name)) res.notes.push(name + ' is in devDependencies – not removed (out of scope)');
   });
 
   const setDep = (name, range, why) => {
@@ -265,7 +265,7 @@ function run(argv, overrides) {
     if (!action) return;
     change(action === 'add' ? 'PKG.ADD' : 'PKG.UPDATE', name + ' ' + range + (why ? ' (' + why + ')' : ''), name);
     // buildSharedGen1 מתעלמת מ-devDependencies – בלי הצהרה ב-dependencies הבנייה תיכשל
-    if (wasOnlyDev) res.notes.push(name + ' היה רק ב-devDependencies – נוסף ל-dependencies (buildSharedGen1 מתעלמת מ-devDependencies)');
+    if (wasOnlyDev) res.notes.push(name + ' was only in devDependencies – added to dependencies (buildSharedGen1 ignores devDependencies)');
   };
 
   // 2 + 8. target versions (adds to dependencies also when only in devDependencies)
@@ -277,11 +277,11 @@ function run(argv, overrides) {
     if (!gated[name] || inDeps(name) || inDev(name)) return setDep(name, range);
     const used = inventory && inventory[gated[name]];
     if (!Array.isArray(used)) {
-      res.notes.push(name + ' לא נוסף – אינו מוצהר ב-package.json ואין inventory עדכני לאימות שימוש (הרץ scan.js)');
+      res.notes.push(name + ' not added – it is not declared in package.json and there is no up-to-date inventory to verify usage (run scan.js)');
     } else if (!used.length) {
-      res.notes.push(name + ' לא נוסף – אינו מוצהר ב-package.json והמלאי לא מראה בו שימוש');
+      res.notes.push(name + ' not added – it is not declared in package.json and the inventory shows no usage');
     } else {
-      setDep(name, range, 'בשימוש לפי inventory');
+      setDep(name, range, 'used according to inventory');
     }
   });
 
@@ -290,11 +290,11 @@ function run(argv, overrides) {
     const range = versions.conditionalDependencies[name];
     if (inDeps(name)) return setDep(name, range);
     const usage = iconsUsage(inventory);
-    if (usage === true) setDep(name, range, 'בשימוש לפי inventory');
+    if (usage === true) setDep(name, range, 'used according to inventory');
     else if (usage === null && iconsV4Declared) {
-      setDep(name, range, 'אין inventory');
+      setDep(name, range, 'no inventory');
       res.result = 'REVIEW';
-      res.manual.push({ file: 'package.json', line: null, reason: name + ' נוסף כי @material-ui/icons הוצהר ואין inventory לאימות שימוש. הרץ scan.js או ודא ידנית' });
+      res.manual.push({ file: 'package.json', line: null, reason: name + ' was added because @material-ui/icons was declared and there is no inventory to verify usage. Run scan.js or check manually' });
     }
   });
 
@@ -309,7 +309,7 @@ function run(argv, overrides) {
       try {
         range = '^' + deps.npmView(name);
       } catch (err) {
-        return blocked('לא ניתן לקבוע גרסה ל-' + name + ' (' + (err.message || err) + '). קבע אותה ב-reference/versions.json או בדוק גישה ל-registry');
+        return blocked('Cannot determine a version for ' + name + ' (' + (err.message || err) + '). Set it in reference/versions.json or check access to the registry');
       }
     }
     setDep(name, range);
@@ -337,13 +337,13 @@ function run(argv, overrides) {
 
   // 9. build tools – reported only
   const tools = versions.buildTools.filter((t) => inDeps(t));
-  if (tools.length) res.notes.push('כלי build ב-dependencies (לא הוזזו): ' + tools.join(', '));
+  if (tools.length) res.notes.push('Build tools in dependencies (not moved): ' + tools.join(', '));
 
   // 10. pickers – one manual item per file that uses them (first import line in the file)
   if (res.changes.some((c) => c.confidence === 'review' && c.reason === PICKERS_REASON)) {
     res.result = 'REVIEW';
     if (!inventory) {
-      res.manual.push({ file: 'package.json', line: null, reason: PICKERS_REASON + '. אין inventory – הרץ scan.js כדי לאתר את הקבצים שמשתמשים ב-pickers' });
+      res.manual.push({ file: 'package.json', line: null, reason: PICKERS_REASON + '. No inventory – run scan.js to find the files that use pickers' });
     } else {
       const seen = new Set();
       (inventory.pickers || []).filter((p) => isPicker(p.module || '')).forEach((p) => {
@@ -369,14 +369,14 @@ function run(argv, overrides) {
     res.changes = [];
     res.manual = []; // describe edits that were not written
     return blocked(originalError
-      ? 'package.json: הקובץ המקורי אינו JSON תקין (' + originalError + ') – כנראה הערה או פסיק מיותר, ש-npm לא יקרא. תקן ידנית והרץ שוב. הקובץ לא נכתב'
-      : 'package.json: העריכה יצרה JSON לא תקין (' + err.message + ') – באג ב-' + SCRIPT + '. הקובץ לא נכתב');
+      ? 'package.json: the original file is not valid JSON (' + originalError + ') – probably a comment or a trailing comma, which npm will not read. Fix it manually and run again. The file was not written'
+      : 'package.json: the edit produced invalid JSON (' + err.message + ') – a bug in ' + SCRIPT + '. The file was not written');
   }
   if (!opts.dryRun) {
     try {
       deps.fs.writeFileSync(pkgPath, updated, 'utf8');
     } catch (err) {
-      return blocked('לא ניתן לכתוב את package.json: ' + err.message);
+      return blocked('Cannot write package.json: ' + err.message);
     }
   }
   return res;
@@ -386,7 +386,7 @@ function formatText(res) {
   const L = ['package-json' + (res.dryRun ? ' [dry-run]' : '')];
   const sym = { 'PKG.REMOVE': '−', 'PKG.ADD': '+', 'PKG.UPDATE': '↑', 'PKG.VERSION': '↑', 'PKG.ADD_BLOCK': '+' };
   res.changes.forEach((c) => L.push('  ' + (sym[c.rule] || '•') + ' ' + c.detail + (c.confidence === 'review' ? ' 🔍' : '')));
-  if (!res.changes.length && res.result !== 'BLOCKED') L.push('  אין שינויים');
+  if (!res.changes.length && res.result !== 'BLOCKED') L.push('  no changes');
   res.manual.forEach((m) => L.push('  ⚠ ' + (m.file && m.file !== 'package.json' ? m.file + (m.line ? ':' + m.line : '') + ' – ' : '') + m.reason));
   res.notes.forEach((n) => L.push('  ℹ ' + n));
   res.blockers.forEach((b) => L.push('  ⛔ ' + b.message));

@@ -20,10 +20,10 @@ function parseArgs(argv) {
     else if (a === '--json') opts.json = true;
     else if (a === '--step') {
       const v = argv[i + 1];
-      if (v === undefined || v.startsWith('--')) opts.errors.push('‎--step דורש ערך');
+      if (v === undefined || v.startsWith('--')) opts.errors.push('--step requires a value');
       else { opts.step = v; i++; }
     } else if (a.startsWith('--step=')) opts.step = a.slice('--step='.length);
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   }
   return opts;
 }
@@ -100,19 +100,19 @@ function run(argv, overrides) {
   try {
     config = JSON.parse(require('fs').readFileSync(STEPS_FILE, 'utf8'));
   } catch (err) {
-    block('לא ניתן לטעון את reference/commit-steps.json: ' + err.message, { check: 'config' });
+    block('Cannot load reference/commit-steps.json: ' + err.message, { check: 'config' });
     return blocked();
   }
   const steps = Object.keys(config.steps);
   if (!opts.step || steps.indexOf(opts.step) === -1) {
-    block('‎--step חייב להיות אחד מ: ' + steps.join(' | ') + (opts.step ? ' (התקבל "' + opts.step + '")' : ''), { check: 'step' });
+    block('--step must be one of: ' + steps.join(' | ') + (opts.step ? ' (got "' + opts.step + '")' : ''), { check: 'step' });
     return blocked();
   }
 
   // --- repo state ------------------------------------------------------------
   const repo = git(['rev-parse', '--is-inside-work-tree']);
   if (!repo.ok || repo.stdout.trim() !== 'true') {
-    block(repo.notFound ? 'git לא מותקן או לא נמצא ב-PATH' : 'התיקייה ' + deps.cwd + ' אינה git repo', { check: 'git-repo' });
+    block(repo.notFound ? 'git is not installed or not on PATH' : 'The folder ' + deps.cwd + ' is not a git repo', { check: 'git-repo' });
     return blocked();
   }
 
@@ -120,10 +120,10 @@ function run(argv, overrides) {
   if (sym.ok && sym.stdout.trim()) {
     res.branch = sym.stdout.trim();
     if (config.protectedBranches.indexOf(res.branch) !== -1) {
-      block('לא מבצעים commit ישירות על ' + res.branch + ' – הרץ קודם את branch.js', { check: 'protected-branch' });
+      block('Not committing directly on ' + res.branch + ' – run branch.js first', { check: 'protected-branch' });
     }
   } else {
-    block('HEAD במצב detached – commit לא יהיה שייך לאף בראנץ\'', { check: 'detached-head' });
+    block('HEAD is detached – the commit would not belong to any branch', { check: 'detached-head' });
   }
 
   const gitPath = (name) => {
@@ -135,14 +135,14 @@ function run(argv, overrides) {
     ['rebase-merge', 'rebase'], ['rebase-apply', 'rebase / am'],
   ].filter((x) => { const p = gitPath(x[0]); return p && deps.fs.existsSync(p); }).map((x) => x[1]);
   if (inProgress.length) {
-    block('יש פעולת ' + inProgress[0] + ' באמצע – יש להשלים או לבטל אותה ידנית', { check: 'operation-in-progress' });
+    block('A ' + inProgress[0] + ' is in progress – finish or abort it manually', { check: 'operation-in-progress' });
   }
 
   // git add -A היה מסמן קונפליקטים כפתורים – חובה לעצור לפני
   const unmerged = git(['diff', '--name-only', '-z', '--diff-filter=U']);
   const conflicted = unmerged.ok ? unmerged.stdout.split('\0').filter(Boolean) : [];
   if (conflicted.length) {
-    block('יש ' + conflicted.length + ' קבצים עם קונפליקט לא פתור', { check: 'conflicts', files: conflicted });
+    block(conflicted.length + ' files have unresolved conflicts', { check: 'conflicts', files: conflicted });
   }
 
   if (res.blockers.length) return blocked();
@@ -164,20 +164,20 @@ function run(argv, overrides) {
     const add = git(addArgs, env);
     res.commands.push({ command: displayCommand(addArgs), status: add.ok ? (opts.dryRun ? 'simulated' : 'done') : 'failed' });
     if (!add.ok) {
-      block('git add נכשל: ' + (firstLines(add.stderr) || add.message), { check: 'add' });
+      block('git add failed: ' + (firstLines(add.stderr) || add.message), { check: 'add' });
       return blocked();
     }
 
     const diff = git(['diff', '--cached', '--name-only', '-z'], env);
     if (!diff.ok) {
-      block('git diff --cached נכשל: ' + (firstLines(diff.stderr) || diff.message), { check: 'diff' });
+      block('git diff --cached failed: ' + (firstLines(diff.stderr) || diff.message), { check: 'diff' });
       return blocked();
     }
     const files = diff.stdout.split('\0').filter(Boolean);
     res.filesChanged = files.length;
     if (files.length === 0) {
       res.result = 'NOOP';
-      res.notes.push('אין שינויים לשלב ' + opts.step);
+      res.notes.push('No changes for step ' + opts.step);
       return res;
     }
 
@@ -196,12 +196,12 @@ function run(argv, overrides) {
     if (!commit.ok) {
       const out = commit.stderr + '\n' + commit.stdout;
       let msg;
-      if (/Please tell me who you are|unable to auto-detect email/i.test(out)) msg = 'לא מוגדרים user.name / user.email ב-git';
-      else if (commit.timedOut) msg = 'git commit לא הסתיים תוך ' + GIT_TIMEOUT_MS / 1000 + ' שניות (hook? חתימת GPG?)';
-      else msg = 'git commit נכשל (ייתכן hook): ' + (firstLines(out, 5) || commit.message);
+      if (/Please tell me who you are|unable to auto-detect email/i.test(out)) msg = 'git user.name / user.email are not set';
+      else if (commit.timedOut) msg = 'git commit did not finish within ' + GIT_TIMEOUT_MS / 1000 + ' seconds (a hook? GPG signing?)';
+      else msg = 'git commit failed (possibly a hook): ' + (firstLines(out, 5) || commit.message);
       block(msg, { check: 'commit' });
       res.changes = [];
-      res.notes.push('השינויים נשארו ב-staging; לא בוצע commit');
+      res.notes.push('The changes are still staged; nothing was committed');
       return blocked();
     }
     const head = git(['rev-parse', 'HEAD']);
@@ -217,14 +217,14 @@ function run(argv, overrides) {
 function formatText(res) {
   const L = [];
   const sym = { done: '✓', simulated: '✓', failed: '⛔', planned: '→' };
-  L.push('commit – ' + (res.step || '?') + (res.dryRun ? ' [dry-run]' : '') + (res.branch ? ' על ' + res.branch : ''));
+  L.push('commit – ' + (res.step || '?') + (res.dryRun ? ' [dry-run]' : '') + (res.branch ? ' on ' + res.branch : ''));
   res.commands.forEach((c) => L.push(sym[c.status] + ' ' + c.command));
   if (res.result === 'OK') {
     L.push('');
-    L.push((res.dryRun ? '📝 היה נוצר: ' : '📝 ') + res.message);
+    L.push((res.dryRun ? '📝 would create: ' : '📝 ') + res.message);
     if (res.sha) L.push('   sha: ' + res.sha);
     res.changes.slice(0, MAX_LISTED_FILES).forEach((c) => L.push('     ' + c.file));
-    if (res.changes.length > MAX_LISTED_FILES) L.push('     ... ועוד ' + (res.changes.length - MAX_LISTED_FILES));
+    if (res.changes.length > MAX_LISTED_FILES) L.push('     ... and ' + (res.changes.length - MAX_LISTED_FILES) + ' more');
   }
   res.blockers.forEach((b) => {
     L.push('⛔ ' + b.message);

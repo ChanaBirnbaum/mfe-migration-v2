@@ -22,7 +22,6 @@ function baseResponses() {
     'git symbolic-ref --short -q HEAD': ok('feature/migrate\n'),
     'git rev-parse --short HEAD': ok('abc1234\n'),
     'git status --porcelain': ok(''),
-    'git ls-remote --heads origin digital_V2': ok('deadbeef\trefs/heads/digital_V2\n'),
     'npm --version': ok('10.8.2\n'),
     'npm config get registry': ok('https://nexus.internal/repository/npm/\n'),
     'npm ping': ok(''),
@@ -96,14 +95,16 @@ test('clean environment → OK, no blockers, nothing written', async () => {
   assert.deepStrictEqual(s.writes, []);
   assert.deepStrictEqual(res.checks.map((c) => c.status), Array(res.checks.length).fill('ok'));
   assert.deepStrictEqual(res.checks.map((c) => c.id),
-    ['git-repo', 'git-branch', 'git-clean', 'package-json', 'node', 'npm-ping', 'target-versions', 'remote-branch']);
+    ['git-repo', 'git-branch', 'git-clean', 'package-json', 'node', 'npm-ping', 'target-versions']);
 });
 
 test('only read-only commands are executed', async () => {
   const s = setup();
   await runPreflight({}, s.deps);
-  const allowed = /^(git (rev-parse|symbolic-ref|status --porcelain|ls-remote)|npm (--version|config get|ping|view))/;
+  const allowed = /^(git (rev-parse|symbolic-ref|status --porcelain)|npm (--version|config get|ping|view))/;
   s.calls.forEach((c) => assert.match(c, allowed, 'unexpected command ' + c));
+  // the target branch (digital_V2) is created by branch.js – preflight does not look for it on origin
+  assert.ok(!s.calls.some((c) => c.indexOf('git ls-remote') === 0));
 });
 
 test('all target versions are queried with the exact version', async () => {
@@ -145,7 +146,7 @@ test('not a git repo → git-repo blocker only, dependent git checks skipped', a
   const res = await runPreflight({}, s.deps);
   assert.strictEqual(res.result, 'BLOCKED');
   assert.deepStrictEqual(blockerIds(res), ['git-repo']);
-  ['git-branch', 'git-clean', 'remote-branch'].forEach((id) => {
+  ['git-branch', 'git-clean'].forEach((id) => {
     assert.strictEqual(checkById(res, id).status, 'warn');
     assert.strictEqual(checkById(res, id).skipped, true);
   });
@@ -226,7 +227,7 @@ test('npm ping timeout → npm-ping blocker flagged as timeout, process killed',
   const res = await runPreflight({}, s.deps);
   assert.deepStrictEqual(blockerIds(res), ['npm-ping']);
   assert.strictEqual(res.blockers[0].timeout, true);
-  assert.match(res.blockers[0].message, /לא הגיב תוך/);
+  assert.match(res.blockers[0].message, /did not respond within/);
   assert.deepStrictEqual(s.killed, ['npm ping']);
 });
 
@@ -247,7 +248,7 @@ test('package not in registry (E404) → blocker per package', async () => {
   });
   const res = await runPreflight({}, s.deps);
   assert.deepStrictEqual(res.blockers.map((b) => b.package).sort(), ['@emotion/styled', '@ips/mfe-shared-deps']);
-  res.blockers.forEach((b) => assert.match(b.message, /לא נמצאה/));
+  res.blockers.forEach((b) => assert.match(b.message, /not found/));
 });
 
 test('npm view timeout → blocker flagged as timeout', async () => {
@@ -255,32 +256,6 @@ test('npm view timeout → blocker flagged as timeout', async () => {
   const res = await runPreflight({}, s.deps);
   assert.deepStrictEqual(blockerIds(res), ['target-versions']);
   assert.strictEqual(res.blockers[0].package, 'react-dom');
-  assert.strictEqual(res.blockers[0].timeout, true);
-});
-
-test('digital_V2 missing on origin → remote-branch blocker', async () => {
-  const s = setup({ responses: { 'git ls-remote --heads origin digital_V2': ok('') } });
-  const res = await runPreflight({}, s.deps);
-  assert.deepStrictEqual(blockerIds(res), ['remote-branch']);
-});
-
-test('only a suffix match (refs/heads/old/digital_V2) → remote-branch blocker', async () => {
-  const s = setup({ responses: { 'git ls-remote --heads origin digital_V2': ok('aaa\trefs/heads/old/digital_V2\n') } });
-  const res = await runPreflight({}, s.deps);
-  assert.deepStrictEqual(blockerIds(res), ['remote-branch']);
-});
-
-test('no origin remote → remote-branch blocker', async () => {
-  const s = setup({ responses: { 'git ls-remote --heads origin digital_V2': fail(128, "fatal: 'origin' does not appear to be a git repository") } });
-  const res = await runPreflight({}, s.deps);
-  assert.deepStrictEqual(blockerIds(res), ['remote-branch']);
-  assert.match(res.blockers[0].message, /origin/);
-});
-
-test('git ls-remote timeout → remote-branch blocker flagged as timeout', async () => {
-  const s = setup({ responses: { 'git ls-remote --heads origin digital_V2': HANG } });
-  const res = await runPreflight({}, s.deps);
-  assert.deepStrictEqual(blockerIds(res), ['remote-branch']);
   assert.strictEqual(res.blockers[0].timeout, true);
 });
 
@@ -294,12 +269,11 @@ test('multiple failures are all reported together', async () => {
       'git symbolic-ref --short -q HEAD': fail(1),
       'git status --porcelain': ok(' M a.js\n'),
       'npm view react@18.3.1 version': ok(''),
-      'git ls-remote --heads origin digital_V2': ok(''),
     },
   });
   const res = await runPreflight({}, s.deps);
   assert.deepStrictEqual(blockerIds(res),
-    ['git-branch', 'git-clean', 'package-json', 'node', 'target-versions', 'remote-branch']);
+    ['git-branch', 'git-clean', 'package-json', 'node', 'target-versions']);
 });
 
 test('text output: one symbol line per check, RESULT is last line', async () => {
@@ -309,7 +283,7 @@ test('text output: one symbol line per check, RESULT is last line', async () => 
   assert.strictEqual(code, 0);
   const lines = out.trimEnd().split('\n');
   assert.strictEqual(lines[lines.length - 1], 'RESULT: BLOCKED');
-  assert.match(out, /^⛔ עץ עבודה נקי/m);
+  assert.match(out, /^⛔ Clean working tree/m);
   assert.match(out, /^✓ git repo/m);
 });
 

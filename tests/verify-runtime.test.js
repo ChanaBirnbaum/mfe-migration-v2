@@ -105,8 +105,8 @@ test('never npm start / --open: webpack serve --mode development --env sviva=loc
 test('notes: version read from node_modules + standalone vs Host warning', async () => {
   const port = await freePort();
   const res = await run([], deps(repo(port), 'ok'));
-  assert.ok(res.notes.some((n) => /node_modules/.test(n) && /תחת Host/.test(n)));
-  assert.ok(res.notes.some((n) => /import: false ב-buildSharedGen1/.test(n)));
+  assert.ok(res.notes.some((n) => /node_modules/.test(n) && /under a Host/.test(n)));
+  assert.ok(res.notes.some((n) => /import: false in buildSharedGen1/.test(n)));
 });
 
 // ---- failures – the server is stopped in every one of them ----
@@ -117,7 +117,7 @@ test('remoteEntry.js missing → BLOCKED, server stopped', async () => {
   const res = await run([], deps(root, 'no-entry'));
   assert.strictEqual(res.result, 'BLOCKED');
   assert.strictEqual(res.remoteEntryOk, false);
-  assert.match(res.blockers[0].message, /remoteEntry\.js לא נטען \(HTTP 404\)/);
+  assert.match(res.blockers[0].message, /remoteEntry\.js did not load \(HTTP 404\)/);
   assert.ok(!alive(pidOf(root)));
 });
 
@@ -132,14 +132,14 @@ test('GET / not 200 → REVIEW', async () => {
   const port = await freePort();
   const res = await run([], deps(repo(port), 'no-root'));
   assert.strictEqual(res.result, 'REVIEW');
-  assert.match(res.manual[0].reason, /GET \/ החזיר HTTP 404/);
+  assert.match(res.manual[0].reason, /GET \/ returned HTTP 404/);
 });
 
 test('React 17 → REVIEW pointing to reference/coexistence.md', async () => {
   const port = await freePort();
   const res = await run([], deps(repo(port, { react: '17.0.2', noClient: true }), 'ok'));
   assert.strictEqual(res.result, 'REVIEW');
-  assert.match(res.manual[0].reason, /React 17\.0\.2 ולא 18 – ראה reference\/coexistence\.md/);
+  assert.match(res.manual[0].reason, /React 17\.0\.2, not 18 – see reference\/coexistence\.md/);
   assert.strictEqual(res.hasReactDomClient, false);
 });
 
@@ -147,7 +147,7 @@ test('react / react-dom version mismatch → REVIEW', async () => {
   const port = await freePort();
   const res = await run([], deps(repo(port, { react: '18.3.1', reactDom: '18.2.0' }), 'ok'));
   assert.strictEqual(res.result, 'REVIEW');
-  assert.match(res.manual[0].reason, /בגרסאות שונות/);
+  assert.match(res.manual[0].reason, /at different versions/);
 });
 
 test('compile errors → BLOCKED with diagnostics, server stopped', async () => {
@@ -164,7 +164,7 @@ test('startup timeout → BLOCKED, server stopped', async () => {
   const root = repo(port);
   const res = await run(['--timeout', '1500ms'], deps(root, 'hang'));
   assert.strictEqual(res.result, 'BLOCKED');
-  assert.match(res.blockers[0].message, /לא דיווח על קומפילציה מוצלחת/);
+  assert.match(res.blockers[0].message, /did not report a successful compilation/);
   assert.ok(!alive(pidOf(root)));
 });
 
@@ -172,7 +172,7 @@ test('server crashes on start → BLOCKED with the output tail', async () => {
   const port = await freePort();
   const res = await run([], deps(repo(port), 'crash'));
   assert.strictEqual(res.result, 'BLOCKED');
-  assert.match(res.blockers[0].message, /נסגר לפני שסיים לקמפל \(exit 1\)/);
+  assert.match(res.blockers[0].message, /exited before it finished compiling \(exit 1\)/);
   assert.match(res.blockers[0].raw, /html-webpack-plugin/);
 });
 
@@ -184,7 +184,7 @@ test('port already in use → BLOCKED before starting anything', async () => {
   try {
     const res = await run([], deps(root, 'ok'));
     assert.strictEqual(res.result, 'BLOCKED');
-    assert.match(res.blockers[0].message, /כבר תפוס/);
+    assert.match(res.blockers[0].message, /already in use/);
     assert.ok(!fs.existsSync(path.join(root, 'server.pid')));
   } finally {
     blocker.close();
@@ -214,5 +214,5 @@ test('--dry-run starts nothing; --json contract; webpack-cli missing → BLOCKED
   fs.rmSync(path.join(root, 'node_modules', 'webpack-cli'), { recursive: true, force: true });
   out = '';
   await main([], deps(root, 'ok'), { stdout: (s) => { out += s; }, stderr: () => {} });
-  assert.match(out, /webpack-cli אינו מותקן[\s\S]*RESULT: BLOCKED\n$/);
+  assert.match(out, /webpack-cli is not installed[\s\S]*RESULT: BLOCKED\n$/);
 });

@@ -54,7 +54,7 @@ test('golden: complex (await in loop, several returns) → manual, file unchange
   const { res } = golden('complex');
   assert.strictEqual(res.result, 'REVIEW');
   assert.deepStrictEqual(res.manual.map((m) => m.line), [7, 14]);
-  assert.match(res.manual[0].reason, /לולאה/);
+  assert.match(res.manual[0].reason, /loop/);
   assert.match(res.manual[1].reason, /return/);
 });
 
@@ -227,7 +227,7 @@ test('overlapping edits → BLOCKED with file:line, exit 0, file untouched, no c
   assert.strictEqual(code, 0);
   const res = JSON.parse(out);
   assert.strictEqual(res.result, 'BLOCKED');
-  assert.match(res.blockers[0].message, /^src\/C\.jsx:6 – codemod-anti-patterns יצר שתי עריכות חופפות/); // the async effect
+  assert.match(res.blockers[0].message, /^src\/C\.jsx:6 – codemod-anti-patterns produced two overlapping edits/); // the async effect
   assert.deepStrictEqual(res.changes, []);
   assert.strictEqual(readIn(root, 'src/C.jsx'), f.input);
 });

@@ -22,7 +22,7 @@ function parseArgs(argv) {
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--validate-only') opts.validateOnly = true;
-    else opts.errors.push('פרמטר לא מוכר: ' + a);
+    else opts.errors.push('Unknown argument: ' + a);
   });
   return opts;
 }
@@ -31,8 +31,8 @@ function parseArgs(argv) {
 // Read-only: executes the config in a child process, never writes.
 function validate(deps) {
   const nm = path.join(deps.cwd, 'node_modules');
-  if (!deps.fs.existsSync(nm)) return { ran: false, reason: 'node_modules חסר' };
-  if (!deps.fs.existsSync(path.join(nm, SHARED_PKG))) return { ran: false, reason: SHARED_PKG + ' לא מותקן' };
+  if (!deps.fs.existsSync(nm)) return { ran: false, reason: 'node_modules is missing' };
+  if (!deps.fs.existsSync(path.join(nm, SHARED_PKG))) return { ran: false, reason: SHARED_PKG + ' is not installed' };
   const script = "const c = require('./" + CONFIG + "'); if (typeof c === 'function') c({ sviva: '" + VALIDATE_ENV + "' }, { mode: 'production' });";
   try {
     deps.execFileSync(process.execPath, ['-e', script], {
@@ -43,7 +43,7 @@ function validate(deps) {
     const timedOut = err.code === 'ETIMEDOUT';
     // הפלט המלא – stderr ואז stdout – בלי קיצור; error הוא תקציר לשורת סיכום
     const output = [err.stderr, err.stdout].map((s) => String(s || '').trimEnd()).filter(Boolean).join('\n') ||
-      (timedOut ? 'timeout אחרי ' + VALIDATE_TIMEOUT_MS / 1000 + ' שניות' : String(err.message || err));
+      (timedOut ? 'timeout after ' + VALIDATE_TIMEOUT_MS / 1000 + ' seconds' : String(err.message || err));
     const error = output.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4).join(' | ');
     return { ran: true, ok: false, env: VALIDATE_ENV, error: error, output: output };
   }
@@ -72,7 +72,7 @@ function pasteCode(role, q) {
     'const pkg = require(' + q + './package.json' + q + ');',
     'const { buildSharedGen1 } = require(' + q + SHARED_PKG + q + ');',
     '',
-    '// בתוך new ModuleFederationPlugin({ ... }):',
+    '// inside new ModuleFederationPlugin({ ... }):',
     "shared: buildSharedGen1({ pkg, require, role: '" + role + "' }),",
   ].join('\n');
 }
@@ -162,7 +162,7 @@ function analyse(tsm, text) {
     if (v.getProperties().some((x) => propName(x) === 'publicPath')) return;
     const owner = p.getParent().getParent();
     const env = owner && Node.isPropertyAssignment(owner) ? propName(owner) : null;
-    r.notes.push('ל-output' + (env ? ' של ' + env : '') + ' (שורה ' + p.getStartLineNumber() + ") אין publicPath – מומלץ publicPath: 'auto' ב-remote");
+    r.notes.push('output' + (env ? ' for ' + env : '') + ' (line ' + p.getStartLineNumber() + ") has no publicPath – publicPath: 'auto' is recommended in a remote");
   });
 
   // const deps = require("./package.json").dependencies
@@ -204,11 +204,11 @@ function run(argv, overrides) {
 
   let tsm;
   try { tsm = require('ts-morph'); } catch (_) {
-    return blocked('ts-morph אינו מותקן בתיקיית הסקיל – הרץ npm install ב-' + path.join(__dirname, '..'));
+    return blocked('ts-morph is not installed in the skill folder – run npm install in ' + path.join(__dirname, '..'));
   }
   const full = path.join(deps.cwd, CONFIG);
   let raw;
-  try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked(CONFIG + ' לא נמצא / לא קריא: ' + err.message); }
+  try { raw = deps.fs.readFileSync(full, 'utf8'); } catch (err) { return blocked(CONFIG + ' not found / not readable: ' + err.message); }
   const bom = raw.charCodeAt(0) === 0xfeff ? '﻿' : '';
   const text = bom ? raw.slice(1) : raw;
   const { Node, SyntaxKind: K } = tsm;
@@ -219,22 +219,22 @@ function run(argv, overrides) {
     if (a.plugins.length === 0) {
       res.role = 'standalone';
       res.result = 'NOOP';
-      res.notes.push('אין ModuleFederationPlugin – שירות standalone, אין shared לאמת');
+      res.notes.push('No ModuleFederationPlugin – standalone service, no shared to validate');
       return res;
     }
     if (!a.alreadyMigrated) {
-      return review('shared עדיין לא הומר ל-buildSharedGen1 – אין מה לאמת. הרץ webpack-shared בלי --validate-only, או הדבק ידנית את הקוד מהשלב הקודם');
+      return review('shared has not been converted to buildSharedGen1 yet – nothing to validate. Run webpack-shared without --validate-only, or paste the code from the previous step manually');
     }
     res.validation = validate(deps);
     if (!res.validation.ran) {
-      return blocked('לא ניתן לאמת את ' + CONFIG + ': ' + res.validation.reason + ' – הרץ קודם את install.js');
+      return blocked('Cannot validate ' + CONFIG + ': ' + res.validation.reason + ' – run install.js first');
     }
     if (!res.validation.ok) {
       res.result = 'REVIEW';
-      res.manual.push({ file: CONFIG, line: null, reason: 'הוולידציה נכשלה (sviva=' + VALIDATE_ENV + '): ' + res.validation.error + ' – ' + CONFIG + ' לא שונה', output: res.validation.output });
+      res.manual.push({ file: CONFIG, line: null, reason: 'Validation failed (sviva=' + VALIDATE_ENV + '): ' + res.validation.error + ' – ' + CONFIG + ' was not changed', output: res.validation.output });
       return res;
     }
-    res.notes.push(CONFIG + ' נטען והופעל עם sviva=' + VALIDATE_ENV + ' – buildSharedGen1 עבר');
+    res.notes.push(CONFIG + ' was loaded and run with sviva=' + VALIDATE_ENV + ' – buildSharedGen1 passed');
     return res;
   }
 
@@ -242,7 +242,7 @@ function run(argv, overrides) {
 
   if (a.alreadyMigrated) {
     res.result = 'NOOP';
-    res.notes.unshift('buildSharedGen1 כבר קיים ב-' + CONFIG);
+    res.notes.unshift('buildSharedGen1 already exists in ' + CONFIG);
     return res;
   }
 
@@ -250,20 +250,20 @@ function run(argv, overrides) {
   if (a.plugins.length === 0) {
     res.role = 'standalone';
     res.result = 'NOOP';
-    res.notes.unshift('אין ModuleFederationPlugin – שירות standalone, אין shared להחליף');
+    res.notes.unshift('No ModuleFederationPlugin – standalone service, no shared to replace');
     return res;
   }
-  if (a.plugins.length > 1) return review('נמצאו ' + a.plugins.length + ' מופעי ModuleFederationPlugin – יש להחליט ידנית', pasteCode('remote', a.quote));
+  if (a.plugins.length > 1) return review('Found ' + a.plugins.length + ' ModuleFederationPlugin instances – decide manually', pasteCode('remote', a.quote));
   if (a.shape !== 'function' && a.shape !== 'object') {
-    return review('module.exports אינו פונקציה ואינו אובייקט מזוהה (' + (a.exportedText ? a.exportedText.split('\n')[0] : 'לא נמצא') + ') – הדבק ידנית את הקוד', pasteCode('remote', a.quote));
+    return review('module.exports is neither a function nor a recognized object (' + (a.exportedText ? a.exportedText.split('\n')[0] : 'not found') + ') – paste the code manually', pasteCode('remote', a.quote));
   }
-  if (a.esm) return review(CONFIG + ' כתוב ב-ESM (import/export) – require לא זמין; יש להמיר ידנית', pasteCode('remote', a.quote));
-  if (!a.options) return review('האפשרויות של ModuleFederationPlugin אינן אובייקט ליטרלי – הדבק ידנית', pasteCode('remote', a.quote));
+  if (a.esm) return review(CONFIG + ' is written in ESM (import/export) – require is not available; convert manually', pasteCode('remote', a.quote));
+  if (!a.options) return review('The ModuleFederationPlugin options are not an object literal – paste manually', pasteCode('remote', a.quote));
   if (a.hasExposes && a.hasRemotes) {
     res.role = 'hybrid';
-    return review("שירות היברידי (exposes וגם remotes) – יש לבחור role: 'host' או 'remote'. buildSharedGen1 מקבלת רק " + VALID_ROLES.join(' | '), pasteCode('remote', a.quote));
+    return review("Hybrid service (both exposes and remotes) – choose role: 'host' or 'remote'. buildSharedGen1 accepts only " + VALID_ROLES.join(' | '), pasteCode('remote', a.quote));
   }
-  if (!a.hasExposes && !a.hasRemotes) return review('ל-ModuleFederationPlugin אין exposes ואין remotes – לא ניתן לקבוע role', pasteCode('remote', a.quote));
+  if (!a.hasExposes && !a.hasRemotes) return review('ModuleFederationPlugin has neither exposes nor remotes – cannot determine the role', pasteCode('remote', a.quote));
   const role = a.hasExposes ? 'remote' : 'host';
   if (VALID_ROLES.indexOf(role) === -1) throw new Error('invalid role ' + role); // FederationConfigError guard
   res.role = role;
@@ -295,7 +295,7 @@ function run(argv, overrides) {
       edits.push({ start: stmt.getEnd(), end: stmt.getEnd(), text: newLines.map((l) => eol + indent + l).join('') });
     } else if (usedElsewhere) {
       edits.push({ start: stmt.getEnd(), end: stmt.getEnd(), text: newLines.map((l) => eol + indent + l).join('') });
-      res.notes.push(depsName + ' בשימוש במקום נוסף ב-' + CONFIG + ' – נשאר, ו-' + pkgName + ' נוסף לצידו');
+      res.notes.push(depsName + ' is used elsewhere in ' + CONFIG + ' – kept, and ' + pkgName + ' was added next to it');
     } else {
       edits.push({ start: stmt.getStart(), end: stmt.getEnd(), text: newLines.join(eol + indent) });
     }
@@ -326,14 +326,14 @@ function run(argv, overrides) {
     if (hasComma) commented[commented.length - 1] += ',';
     const replacement = MARKER + eol + commented.map((l) => l).join(eol) + eol + indent + 'shared: ' + call;
     edits.push({ start: p.getStart(), end: p.getEnd(), text: replacement });
-    res.changes.push({ file: CONFIG, line: p.getStartLineNumber(), rule: 'WEBPACK.SHARED', confidence: 'auto', detail: 'shared → ' + call + ' (הקודם נשמר בהערה)' });
+    res.changes.push({ file: CONFIG, line: p.getStartLineNumber(), rule: 'WEBPACK.SHARED', confidence: 'auto', detail: 'shared → ' + call + ' (the previous value is kept in a comment)' });
   } else {
     const props = options.getProperties();
     const last = props[props.length - 1];
     const indent = lineIndent(text, last.getStart());
     const multiline = last.getStartLineNumber() !== options.getStartLineNumber();
     edits.push({ start: last.getEnd(), end: last.getEnd(), text: ',' + (multiline ? eol + indent : ' ') + 'shared: ' + call });
-    res.changes.push({ file: CONFIG, line: last.getStartLineNumber(), rule: 'WEBPACK.SHARED', confidence: 'auto', detail: 'shared: ' + call + ' נוסף' });
+    res.changes.push({ file: CONFIG, line: last.getStartLineNumber(), rule: 'WEBPACK.SHARED', confidence: 'auto', detail: 'shared: ' + call + ' added' });
   }
 
   let out;
@@ -343,7 +343,7 @@ function run(argv, overrides) {
     if (!(err instanceof EditConflict)) throw err;
     res.changes = [];
     blocked(CONFIG + ':' + text.slice(0, err.pos).split('\n').length + ' – ' + SCRIPT +
-      ' יצר שתי עריכות חופפות באותו מקום (באג בסקריפט). הקובץ לא שונה – הדבק ידנית את הקוד');
+      ' produced two overlapping edits at the same place (a bug in the script). The file was not changed – paste the code manually');
     res.blockers[res.blockers.length - 1].code = pasteCode(role, q);
     return res;
   }
@@ -352,25 +352,25 @@ function run(argv, overrides) {
   const diags = check.compilerNode.parseDiagnostics || [];
   if (diags.length) {
     res.changes = [];
-    return review('ההמרה יצרה קוד לא תקין – הקובץ לא שונה. הדבק ידנית', pasteCode(role, q));
+    return review('The conversion produced invalid code – the file was not changed. Paste manually', pasteCode(role, q));
   }
 
   if (opts.dryRun) {
     res.validation = { ran: false, reason: 'dry-run' };
     return res;
   }
-  try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('לא ניתן לכתוב את ' + CONFIG + ': ' + err.message); }
+  try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('Cannot write ' + CONFIG + ': ' + err.message); }
 
   // ---- validation (only if already installed; in run.js it runs as the webpack-validate step after install) ----
   res.validation = validate(deps);
   if (!res.validation.ran) {
-    res.notes.push(res.validation.reason + ' – הוולידציה דולגה. אחרי npm install: node ' + __filename.split(path.sep).join('/') + ' --validate-only (ב-run.js: השלב webpack-validate)');
+    res.notes.push(res.validation.reason + ' – validation was skipped. After npm install: node ' + __filename.split(path.sep).join('/') + ' --validate-only (in run.js: the webpack-validate step)');
     return res;
   }
   if (!res.validation.ok) {
     try { deps.fs.writeFileSync(full, raw, 'utf8'); } catch (_) { /* reported below */ }
     res.changes = [];
-    review('הוולידציה נכשלה (' + res.validation.error + ') – ' + CONFIG + ' הוחזר למצבו המקורי', pasteCode(role, q));
+    review('Validation failed (' + res.validation.error + ') – ' + CONFIG + ' was restored to its original state', pasteCode(role, q));
     res.manual[res.manual.length - 1].output = res.validation.output;
     return res;
   }
@@ -382,17 +382,17 @@ function formatText(res) {
   if (res.result === 'BLOCKED') {
     res.blockers.forEach((b) => {
       L.push('⛔ ' + b.message);
-      if (b.code) { L.push('   קוד להדבקה:'); b.code.split('\n').forEach((l) => L.push('   | ' + l)); }
+      if (b.code) { L.push('   code to paste:'); b.code.split('\n').forEach((l) => L.push('   | ' + l)); }
     });
   }
   else {
     if (res.role) L.push('🔗 role: ' + res.role);
     res.changes.forEach((c) => L.push('✏️ ' + CONFIG + ':' + c.line + ' – ' + c.detail));
-    if (res.validation) L.push(res.validation.ran ? (res.validation.ok ? '✓ ולידציה עברה (sviva=' + res.validation.env + ')' : '⛔ ולידציה נכשלה: ' + res.validation.error) : '⚠ ולידציה דולגה: ' + res.validation.reason);
+    if (res.validation) L.push(res.validation.ran ? (res.validation.ok ? '✓ validation passed (sviva=' + res.validation.env + ')' : '⛔ validation failed: ' + res.validation.error) : '⚠ validation skipped: ' + res.validation.reason);
     res.manual.forEach((m) => {
       L.push('✋ ' + m.reason);
-      if (m.output) { L.push('   פלט השגיאה המלא:'); m.output.split(/\r?\n/).forEach((l) => L.push('   | ' + l)); }
-      if (m.code) { L.push('   קוד להדבקה:'); m.code.split('\n').forEach((l) => L.push('   | ' + l)); }
+      if (m.output) { L.push('   full error output:'); m.output.split(/\r?\n/).forEach((l) => L.push('   | ' + l)); }
+      if (m.code) { L.push('   code to paste:'); m.code.split('\n').forEach((l) => L.push('   | ' + l)); }
     });
     res.notes.forEach((n) => L.push('ℹ ' + n));
   }

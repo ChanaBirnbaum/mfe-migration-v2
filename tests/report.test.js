@@ -22,13 +22,13 @@ const result = (script, extra) => Object.assign({ script: script, result: 'OK', 
 function setup(opts) {
   opts = opts || {};
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'report-test-'));
-  g(root, ['init', '-q', '-b', 'digital_V2']);
+  g(root, ['init', '-q', '-b', 'main']);
   write(root, 'package.json', '{ "name": "hasava-mfe", "version": "0.1.1" }\n');
   write(root, 'src/SearchReport.jsx', 'v1\n');
   write(root, 'src/App.jsx', 'v1\n');
   g(root, ['add', '.']);
   g(root, ['commit', '-q', '-m', 'base']);
-  g(root, ['checkout', '-q', '-b', 'feature/migration-v2-hasava-mfe-20261005']);
+  g(root, ['checkout', '-q', '-b', 'digital_V2']);
   g(root, ['tag', 'migration-start-20261005-1407']);
   write(root, 'package.json', '{ "name": "hasava-mfe", "version": "2.0.0" }\n');
   write(root, 'src/App.jsx', 'v2\n');
@@ -47,28 +47,28 @@ function setup(opts) {
     routerPost602: opts.noRouter ? [] : [{ file: 'src/routes.js', line: 2, api: 'createBrowserRouter' }],
     pickers: [],
     blockers: [],
-    warnings: [{ kind: 'react18Only', file: 'src/Home.jsx', line: 5, message: 'useId אינו קיים ב-React 17' }],
+    warnings: [{ kind: 'react18Only', file: 'src/Home.jsx', line: 5, message: 'useId does not exist in React 17' }],
   });
   m('package-json.json', result('package-json', {
     changes: [{ file: 'package.json', rule: 'PKG.UPDATE', confidence: 'auto', detail: 'react ^18.3.1' }],
-    notes: ['כלי build ב-dependencies (לא הוזזו): babel-loader, react-scripts'],
+    notes: ['Build tools in dependencies (not moved): babel-loader, react-scripts'],
   }));
   m('codemod-mui-imports.json', result('codemod-mui-imports', {
     result: 'REVIEW',
     changes: [{ file: 'src/App.jsx', line: 2, rule: 'MUI.IMPORT', confidence: 'auto', detail: '@material-ui/core → @mui/material' }],
-    manual: [{ file: 'src/App.jsx', line: 9, reason: 'Hidden: הוסר ב-v5 – דורש המרה סמנטית' }],
+    manual: [{ file: 'src/App.jsx', line: 9, reason: 'Hidden: removed in v5 – needs a semantic conversion' }],
   }));
   const ms = [];
   for (let i = 1; i <= 25; i++) ms.push({ file: 'src/components/C' + i + '.jsx', line: i, rule: 'MS.SLOT', confidence: 'auto', detail: 'classes.paper → slotProps.paper.sx' });
-  ms.push({ file: 'src/SearchReport.jsx', line: 18, rule: 'MS.HOOK', confidence: 'review', detail: "classes.option → '& .MuiAutocomplete-option'", reason: 'מיקום ה-selector נגזר ממבנה ה-DOM – ודא ויזואלית' });
+  ms.push({ file: 'src/SearchReport.jsx', line: 18, rule: 'MS.HOOK', confidence: 'review', detail: "classes.option → '& .MuiAutocomplete-option'", reason: 'The selector position was derived from the DOM structure – check visually' });
   m('codemod-makestyles.json', result('codemod-makestyles', {
     result: 'REVIEW',
     changes: ms,
-    manual: [{ file: 'src/Dynamic.jsx', line: 4, reason: 'רמה C – המפתחות box תלויים ב-props' }],
+    manual: [{ file: 'src/Dynamic.jsx', line: 4, reason: 'Level C – the keys box depend on props' }],
   }));
   m('webpack-shared.json', result('webpack-shared', {
     changes: [{ file: 'webpack.config.js', line: 23, rule: 'WEBPACK.SHARED', confidence: 'auto', detail: "shared → buildSharedGen1({ pkg, require, role: 'remote' })" }],
-    notes: ["ל-output של prod (שורה 13) אין publicPath – מומלץ publicPath: 'auto' ב-remote"],
+    notes: ["output for prod (line 13) has no publicPath – publicPath: 'auto' is recommended in a remote"],
   }));
   m('build-1.json', { script: 'build', result: 'BLOCKED', errorCount: 3, warningCount: 1, diagnostics: [], notes: [], changes: [], manual: [] });
   m('build-2.json', {
@@ -85,42 +85,42 @@ test('header and summary: service, date, branch, tag, files / commits, build, ma
   const res = run([], { cwd: root, now: NOW, env: GIT_ENV });
   assert.strictEqual(res.result, 'OK');
   const md = reportOf(root);
-  assert.match(md, /^# דוח הסבה לדור 2 – hasava-mfe\n/);
-  assert.match(md, /תאריך: 2026-10-06 \| בראנץ': `feature\/migration-v2-hasava-mfe-20261005` \| tag לשחזור: `migration-start-20261005-1407`/);
-  assert.match(md, /3 קבצים שונו ב-2 commits \| build: ✅ עובר \(1 אזהרות\) \| \*\*\d+ פריטים לטיפול ידני\*\*/);
+  assert.match(md, /^# Generation 2 migration report – hasava-mfe\n/);
+  assert.match(md, /Date: 2026-10-06 \| Branch: `digital_V2` \| Restore tag: `migration-start-20261005-1407`/);
+  assert.match(md, /3 files changed in 2 commits \| build: ✅ passing \(1 warnings\) \| \*\*\d+ items need manual handling\*\*/);
 });
 
 test('manual section comes before the changes, numbered, file:line – reason', () => {
   const root = setup({ buildOk: true });
   run([], { cwd: root, now: NOW, env: GIT_ENV });
   const md = reportOf(root);
-  assert.ok(md.indexOf('## דורש טיפול ידני') < md.indexOf('## שינויים שבוצעו'));
-  const section = md.slice(md.indexOf('## דורש טיפול ידני'), md.indexOf('## שינויים שבוצעו'));
-  assert.match(section, /^1\. `src\/App\.jsx:9` – Hidden: הוסר ב-v5/m);
-  assert.match(section, /^2\. `src\/Dynamic\.jsx:4` – רמה C/m);
-  assert.match(section, /^3\. `src\/Home\.jsx:5` – useId אינו קיים ב-React 17/m);
-  assert.match(section, /`src\/SearchReport\.jsx:18` – לבדיקה: מיקום ה-selector/);
+  assert.ok(md.indexOf('## Needs manual handling') < md.indexOf('## Changes made'));
+  const section = md.slice(md.indexOf('## Needs manual handling'), md.indexOf('## Changes made'));
+  assert.match(section, /^1\. `src\/App\.jsx:9` – Hidden: removed in v5/m);
+  assert.match(section, /^2\. `src\/Dynamic\.jsx:4` – Level C/m);
+  assert.match(section, /^3\. `src\/Home\.jsx:5` – useId does not exist in React 17/m);
+  assert.match(section, /`src\/SearchReport\.jsx:18` – To review: The selector position/);
 });
 
 test('failed build → blocked items and build errors listed first in manual', () => {
   const root = setup();
   run([], { cwd: root, now: NOW, env: GIT_ENV });
   const md = reportOf(root);
-  assert.match(md, /build: ⛔ נכשל – 1 שגיאות \(בהרצה הראשונה: 3, 2 הרצות\)/);
-  assert.match(md, /^1\. `src\/index\.jsx:3` – שגיאת build \[webpack MODULE_NOT_FOUND\]: Can't resolve '\.\/Missing'/m);
-  assert.match(md, /- \[ \] ה-build עובר/);
+  assert.match(md, /build: ⛔ failing – 1 errors \(first run: 3, 2 runs\)/);
+  assert.match(md, /^1\. `src\/index\.jsx:3` – Build error \[webpack MODULE_NOT_FOUND\]: Can't resolve '\.\/Missing'/m);
+  assert.match(md, /- \[ \] The build passes/);
 });
 
 test('changes grouped by stage; a stage with more than 20 rows is collapsed', () => {
   const root = setup({ buildOk: true });
   run([], { cwd: root, now: NOW, env: GIT_ENV });
   const md = reportOf(root);
-  const order = ['### package.json (1)', '### ייבוא MUI (1)', '### makeStyles → sx (26)', '### webpack federation (1)'].map((h) => md.indexOf(h));
+  const order = ['### package.json (1)', '### MUI imports (1)', '### makeStyles → sx (26)', '### webpack federation (1)'].map((h) => md.indexOf(h));
   assert.ok(order.every((i, k) => i !== -1 && (k === 0 || i > order[k - 1])), order.join(','));
   const ms = md.slice(md.indexOf('### makeStyles → sx'), md.indexOf('### webpack federation'));
-  assert.match(ms, /<details>\n<summary>26 שינויים – לחץ להצגה<\/summary>/);
+  assert.match(ms, /<details>\n<summary>26 changes – click to expand<\/summary>/);
   assert.match(ms, /\| makeStyles → sx \| `src\/SearchReport\.jsx:18` \| classes\.option → '& \.MuiAutocomplete-option' 🔍 \|/);
-  const pkg = md.slice(md.indexOf('### package.json'), md.indexOf('### ייבוא MUI'));
+  const pkg = md.slice(md.indexOf('### package.json'), md.indexOf('### MUI imports'));
   assert.ok(pkg.indexOf('<details>') === -1);
 });
 
@@ -128,27 +128,27 @@ test('notes from all scripts + inventory findings', () => {
   const root = setup({ buildOk: true });
   run([], { cwd: root, now: NOW, env: GIT_ENV });
   const md = reportOf(root);
-  const notes = md.slice(md.indexOf('## הערות'), md.indexOf('## מה לבדוק לפני PR'));
-  assert.match(notes, /כלי build ב-dependencies \(לא הוזזו\): babel-loader, react-scripts _\(package-json\)_/);
-  assert.match(notes, /אין publicPath/);
-  assert.match(notes, /useId \(API של React 18 בלבד\) ב-src\/Home\.jsx:5/);
+  const notes = md.slice(md.indexOf('## Notes'), md.indexOf('## What to check before the PR'));
+  assert.match(notes, /Build tools in dependencies \(not moved\): babel-loader, react-scripts _\(package-json\)_/);
+  assert.match(notes, /has no publicPath/);
+  assert.match(notes, /useId \(a React 18-only API\) in src\/Home\.jsx:5/);
 });
 
 test('checklist is derived from the findings', () => {
   const root = setup({ buildOk: true, stash: true });
   run([], { cwd: root, now: NOW, env: GIT_ENV });
-  const list = reportOf(root).split('## מה לבדוק לפני PR')[1];
-  assert.match(list, /- \[ \] טעינת השירות תחת ה-Host הישן \(React 17\) ותחת ה-Host החדש/);
-  assert.match(list, /- \[ \] בדיקה ויזואלית של המסכים .*src\/components\/C1\.jsx/);
+  const list = reportOf(root).split('## What to check before the PR')[1];
+  assert.match(list, /- \[ \] Load the service under the old Host \(React 17\) and under the new Host/);
+  assert.match(list, /- \[ \] Visually check the screens .*src\/components\/C1\.jsx/);
   assert.match(list, /createBrowserRouter \(src\/routes\.js:2\)/);
-  assert.match(list, /git stash יש 1 רשומות/);
-  assert.ok(list.indexOf('ה-build עובר') === -1);
+  assert.match(list, /git stash has 1 entries/);
+  assert.ok(list.indexOf('The build passes') === -1);
 });
 
 test('no router / no stash → those checklist items are absent', () => {
   const root = setup({ buildOk: true, noRouter: true });
   run([], { cwd: root, now: NOW, env: GIT_ENV });
-  const list = reportOf(root).split('## מה לבדוק לפני PR')[1];
+  const list = reportOf(root).split('## What to check before the PR')[1];
   assert.ok(list.indexOf('react-router') === -1);
   assert.ok(list.indexOf('stash') === -1);
 });
@@ -158,8 +158,8 @@ test('missing script outputs are listed; git commits fill the gap', () => {
   fs.unlinkSync(path.join(root, '.migration', 'codemod-mui-imports.json'));
   run([], { cwd: root, now: NOW, env: GIT_ENV });
   const md = reportOf(root);
-  assert.match(md, /פלטים שלא נמצאו ב-\.migration\/: preflight, branch, codemod-mui-imports/);
-  assert.match(md, /### commit mechanical \(1\)\n\n\| שלב \| קובץ \| מה שונה \|\n\|---\|---\|---\|\n\| commit mechanical \| `src\/App\.jsx` \| שונה \(migration-v2\(mechanical\)/);
+  assert.match(md, /Outputs not found in \.migration\/: preflight, branch, codemod-mui-imports/);
+  assert.match(md, /### commit mechanical \(1\)\n\n\| Step \| File \| What changed \|\n\|---\|---\|---\|\n\| commit mechanical \| `src\/App\.jsx` \| modified \(migration-v2\(mechanical\)/);
 });
 
 test('never committed: HEAD unchanged, and commit.js skips the report', () => {

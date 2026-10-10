@@ -96,7 +96,7 @@ test('output is streamed to stdout before the summary; nothing on stderr', async
   assert.strictEqual(err, '');
   assert.match(chunks[0], /npm warn deprecated/);
   assert.match(chunks[2], /added 1234 packages/);
-  assert.match(chunks[chunks.length - 1], /📦 1234 חבילות[\s\S]*RESULT: OK\n$/);
+  assert.match(chunks[chunks.length - 1], /📦 1234 packages[\s\S]*RESULT: OK\n$/);
 });
 
 test('--json: no streaming, installedPackages / durationMs / warnings', async () => {
@@ -164,7 +164,7 @@ test('rerun after a successful install (new untracked lock) is not blocked', asy
 test('no commits and a dirty tree → BLOCKED', async () => {
   const root = repo({ commit: false });
   const res = await run([], deps(root, fakeCp({ out: SUCCESS })));
-  assert.match(res.blockers[0].message, /אין אף commit/);
+  assert.match(res.blockers[0].message, /There are no commits/);
 });
 
 test('not a git repo → BLOCKED', async () => {
@@ -179,7 +179,7 @@ test('node_modules tracked by git → BLOCKED', async () => {
   g(root, ['add', '.']);
   g(root, ['commit', '-q', '-m', 'oops']);
   const res = await run([], deps(root, fakeCp({ out: SUCCESS })));
-  assert.match(res.blockers[0].message, /node_modules נמצא במעקב git/);
+  assert.match(res.blockers[0].message, /node_modules is tracked by git/);
 });
 
 test('other uncommitted changes with a last commit → proceeds, with a note', async () => {
@@ -187,7 +187,7 @@ test('other uncommitted changes with a last commit → proceeds, with a note', a
   fs.writeFileSync(path.join(root, 'package.json'), '{ "name": "svc", "version": "2.0.0" }\n');
   const res = await run([], deps(root, fakeCp({ out: SUCCESS })));
   assert.strictEqual(res.result, 'OK');
-  assert.ok(res.notes.some((n) => /שינויים פתוחים/.test(n)));
+  assert.ok(res.notes.some((n) => /uncommitted changes/.test(n)));
 });
 
 test('--force / --legacy-peer-deps are rejected as arguments', async () => {
@@ -195,7 +195,7 @@ test('--force / --legacy-peer-deps are rejected as arguments', async () => {
   for (const flag of ['--force', '--legacy-peer-deps']) {
     const res = await run([flag], deps(root, fakeCp({ out: SUCCESS })));
     assert.strictEqual(res.result, 'BLOCKED');
-    assert.match(res.blockers[0].message, /החלטת אדם/);
+    assert.match(res.blockers[0].message, /human decision/);
   }
 });
 
@@ -268,8 +268,8 @@ test('E404 → BLOCKED with the package name', () => {
 });
 
 test('EACCES / ENOSPC (old "npm ERR!" prefix too) → clear messages', () => {
-  assert.match(diagnose('npm ERR! code EACCES\nnpm ERR! syscall mkdir\nnpm ERR! path /repo/node_modules/.cache\n', fs).message, /הרשאות.*\/repo\/node_modules\/\.cache/);
-  assert.match(diagnose('npm error code ENOSPC\nnpm error syscall write\n', fs).message, /מקום פנוי בדיסק/);
+  assert.match(diagnose('npm ERR! code EACCES\nnpm ERR! syscall mkdir\nnpm ERR! path /repo/node_modules/.cache\n', fs).message, /permission.*\/repo\/node_modules\/\.cache/);
+  assert.match(diagnose('npm error code ENOSPC\nnpm error syscall write\n', fs).message, /No free disk space/);
 });
 
 test('timeout → process killed, BLOCKED', async () => {

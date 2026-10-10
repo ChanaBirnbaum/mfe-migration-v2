@@ -107,7 +107,7 @@ test('golden: withStyles / createStyles / StylesProvider stay, each manual with 
   const file = 'src/jss-apis.jsx';
   assert.strictEqual(res.result, 'REVIEW');
   assert.strictEqual(again.result, 'REVIEW');
-  const WITH_STYLES = 'withStyles אינו נתמך ב-MUI v7. נדרשת המרה ידנית ל-styled() או sx';
+  const WITH_STYLES = 'withStyles is not supported in MUI v7. Needs manual conversion to styled() or sx';
   assert.deepStrictEqual(res.manual.map((m) => [m.file, m.line, m.reason.split(' ')[0]]), [
     [file, 2, 'withStyles'], [file, 2, 'createStyles'], [file, 2, 'StylesProvider'],
     // lines are in the rewritten file: `import { Button } from '@mui/material'` was added at line 3
@@ -115,7 +115,7 @@ test('golden: withStyles / createStyles / StylesProvider stay, each manual with 
     [file, 5, 'withStyles'], // @material-ui/styles – per name, not the package message
   ]);
   res.manual.filter((m) => m.reason.startsWith('withStyles')).forEach((m) => assert.strictEqual(m.reason, WITH_STYLES));
-  assert.ok(!res.manual.some((m) => /מטופל ב-codemod-makestyles/.test(m.reason)), 'no message may claim makestyles handles these');
+  assert.ok(!res.manual.some((m) => /handled by codemod-makestyles/.test(m.reason)), 'no message may claim makestyles handles these');
 });
 
 test('a file whose only @material-ui import is withStyles → REVIEW, not OK/NOOP', async () => {
@@ -206,8 +206,8 @@ test('prettier.format throws → BLOCKED with the file and the prettier error, e
   let out = '';
   const code = await main([], { cwd: root }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
   assert.strictEqual(code, 0);
-  assert.match(out, /⛔ src\/named-root\.jsx: prettier נכשל – SyntaxError: Unexpected token \(3:5\)\. שינויי הייבוא נכתבו לקובץ, אך הוא לא עוצב/);
-  assert.match(out, /✏️ 1 קבצים שונו/);
+  assert.match(out, /⛔ src\/named-root\.jsx: prettier failed – SyntaxError: Unexpected token \(3:5\)\. The import changes were written to the file, but it was not formatted/);
+  assert.match(out, /✏️ 1 files changed/);
   assert.match(out, /RESULT: BLOCKED\n$/);
   assert.strictEqual(readIn(root, c.file), c.expected); // the codemod output itself was written
 });

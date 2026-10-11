@@ -6,6 +6,7 @@
 // touched members are spliced, so key order, indentation and line endings are preserved.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'package-json';
 const VERSIONS_FILE = path.join(__dirname, '..', 'reference', 'versions.json');
@@ -299,11 +300,28 @@ function run(argv, overrides) {
   });
 
   // 4. required packages – dependencies only
+  // מצב stub (אושר ב-run.js): רק לחבילות שב-stubCandidates – file: לתיקיית ה-stub במקום גרסה
+  const stub = stubMode.modeFor(deps);
   for (const name of dataKeys(versions.requiredDependencies)) {
-    if (inDeps(name)) {
+    if (stub.active && stub.packages.indexOf(name) !== -1) {
+      // לעולם לא stub לחבילה שה-registry כן מכיר – גם אם מצב stub אושר קודם
+      let available = null;
+      try { available = deps.npmView(name); } catch (_) { available = null; }
+      if (available) {
+        return blocked(name + ' is available in the registry (' + available + ') – stub mode must not be used for it. ' +
+          'Start over so preflight re-checks: run.js --from preflight');
+      }
+      setDep(name, stubMode.stubSpec(name), 'local test stub – stub mode');
+      res.notes.push(name + ' points to the local test stub (' + stubMode.stubSpec(name) + '). package.json must NOT be committed like this');
+      continue;
+    }
+    const current = ed.get(D, name);
+    if (current !== undefined && !stubMode.isStubSpec(current)) {
       if (versions.requiredDependencies[name]) setDep(name, versions.requiredDependencies[name]);
       continue;
     }
+    // stub מהרצה קודמת, ועכשיו לא במצב stub → מחליפים בגרסה אמיתית מה-registry
+    if (current !== undefined) res.notes.push(name + ' pointed to the local test stub (' + current + ') – replaced with the real package');
     let range = versions.requiredDependencies[name];
     if (!range) {
       try {
@@ -398,8 +416,8 @@ function main(argv, deps, io) {
   io = io || { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr('package-json crashed: ' + ((err && err.stack) || err) + '\n');

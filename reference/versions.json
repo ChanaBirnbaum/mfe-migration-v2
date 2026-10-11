@@ -25,6 +25,8 @@
     "_comment": "null = resolve the latest published version from the registry at run time (written as ^x.y.z)",
     "@ips/mfe-shared-deps": null
   },
+  "internal": ["@ips/mfe-shared-deps"],
+  "_internalComment": "Packages published only to the internal registry. When one is missing from the configured registry, preflight reports it as a stub candidate (test-fixtures/<name>) instead of a blocker; run.js asks before using the stub. Never list a public package here.",
   "types": {
     "@types/react": "^18",
     "@types/react-dom": "^18"

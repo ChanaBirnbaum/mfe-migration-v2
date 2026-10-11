@@ -200,3 +200,49 @@ test('no .migration/ → BLOCKED', () => {
   assert.strictEqual(main([], { cwd: root, env: GIT_ENV }, { stdout: (s) => { out += s; }, stderr: () => {} }), 0);
   assert.match(out, /RESULT: BLOCKED\n$/);
 });
+
+// ---- stub run ----
+
+const STUB_W = 'STUB MODE: @ips/mfe-shared-deps is a local test stub (test-fixtures/), not the real package. x';
+function stubbed(root) {
+  const m = (name, data) => write(root, '.migration/' + name, JSON.stringify(data, null, 2));
+  const s = { stubMode: true, stubPackages: ['@ips/mfe-shared-deps'], notes: [STUB_W] };
+  m('branch.json', result('branch', s));
+  m('install.json', result('install', s));
+  m('verify-runtime.json', result('verify-runtime', s));
+  m('commit-mechanical.json', result('commit', Object.assign({}, s, { result: 'NOOP', step: 'mechanical' })));
+  return root;
+}
+
+test('stub run: the first section after the title says it is NOT validated – stub, proved / not proved, no commits, re-run', () => {
+  const root = stubbed(setup({ buildOk: true }));
+  const res = run([], { cwd: root, now: NOW, env: Object.assign({}, GIT_ENV, { MFE_MIGRATION_STUB: '' }) });
+  assert.strictEqual(res.result, 'OK');
+  const md = reportOf(root);
+  const sections = md.split('\n').filter((l) => /^## /.test(l));
+  assert.strictEqual(sections[0], '## ⚠️ STUB RUN – this is NOT a validated migration');
+  assert.ok(md.indexOf('## ⚠️ STUB RUN') < md.indexOf('## Summary'));
+  assert.match(md, /used a local test stub \(`test-fixtures\/`\) instead of `@ips\/mfe-shared-deps`/);
+  assert.match(md, /\*\*What this run proved\*\*/);
+  assert.match(md, /- Branch: OK\n- Codemods: REVIEW\n- Install: OK\n- Build: OK\n- Runtime check: OK\n- Report: generated/);
+  assert.match(md, /\*\*What it did NOT prove:\*\*\n\n- The `shared` configuration against the real `@ips\/mfe-shared-deps`/);
+  assert.match(md, /\*\*Nothing was committed\.\*\*.*working tree is left with uncommitted changes/);
+  assert.match(md, /\*\*Before any real use:\*\* re-run the pipeline on the internal network/);
+  assert.match(md, /- \[ \] Re-run the whole pipeline on the internal network with the real @ips\/mfe-shared-deps/);
+  // the per-step warning is not repeated in the Notes
+  assert.doesNotMatch(md.slice(md.indexOf('## Notes')), /STUB MODE:/);
+  assert.deepStrictEqual(res.report.stub.packages, ['@ips/mfe-shared-deps']);
+});
+
+test('stub run detected from the environment alone (run.js) → stub section', () => {
+  const root = setup({ buildOk: true });
+  run([], { cwd: root, now: NOW, env: Object.assign({}, GIT_ENV, { MFE_MIGRATION_STUB: '@ips/mfe-shared-deps' }) });
+  assert.match(reportOf(root), /^## ⚠️ STUB RUN/m);
+});
+
+test('normal run → no stub section, no stub checklist item', () => {
+  const root = setup({ buildOk: true });
+  const res = run([], { cwd: root, now: NOW, env: Object.assign({}, GIT_ENV, { MFE_MIGRATION_STUB: '' }) });
+  assert.strictEqual(res.report.stub, null);
+  assert.doesNotMatch(reportOf(root), /STUB/);
+});

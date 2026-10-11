@@ -285,3 +285,43 @@ test('invalid --timeout → BLOCKED', async () => {
   const res = await run(['--timeout', 'soon'], deps(repo(), fakeCp({})));
   assert.match(res.blockers[0].message, /--timeout/);
 });
+
+// ---- stub mode ----
+
+const stubMode = require('../scripts/stub-mode');
+const STUB_ENV = Object.assign({}, GIT_ENV, { MFE_MIGRATION_STUB: '@ips/mfe-shared-deps' });
+
+test('stub mode: install runs as usual; the lock note says it must NOT be committed; --json stubMode', async () => {
+  const root = repo();
+  const f = fakeCp({ out: SUCCESS });
+  let out = '';
+  await main(['--json'], deps(root, f, { env: STUB_ENV }), { stdout: (s) => { out += s; }, stderr: () => {} });
+  const res = JSON.parse(out);
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.stubMode, true);
+  assert.deepStrictEqual(f.calls.spawn[0].args, ['install', '--no-audit', '--no-fund']);
+  assert.ok(res.notes.some((n) => /regenerated against the local test stub – it must NOT be committed/.test(n)));
+  assert.ok(!res.notes.some((n) => /it needs to be committed/.test(n)));
+});
+
+let hasNpm = true;
+try { childProcess.execSync('npm --version', { stdio: 'ignore' }); } catch (_) { hasNpm = false; }
+
+test('real npm: file: dependency on the stub installs with no registry and exposes buildSharedGen1', { skip: !hasNpm, timeout: 180000 }, async () => {
+  const root = repo();
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+    name: 'svc', version: '2.0.0', private: true,
+    dependencies: { '@ips/mfe-shared-deps': stubMode.stubSpec('@ips/mfe-shared-deps') },
+  }, null, 2) + '\n');
+  fs.rmSync(path.join(root, 'node_modules'), { recursive: true, force: true });
+  // an unreachable registry proves nothing is fetched from the network
+  const env = Object.assign({}, STUB_ENV, { npm_config_registry: 'http://127.0.0.1:9/', npm_config_offline: 'true', npm_config_update_notifier: 'false' });
+  const res = await run([], { cwd: root, env: env });
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  const resolved = require.resolve('@ips/mfe-shared-deps', { paths: [root] });
+  const stub = require(resolved);
+  assert.strictEqual(typeof stub.buildSharedGen1, 'function');
+  assert.strictEqual(typeof stub.FederationConfigError, 'function');
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  assert.match(JSON.stringify(lock.packages['node_modules/@ips/mfe-shared-deps']), /test-fixtures/);
+});

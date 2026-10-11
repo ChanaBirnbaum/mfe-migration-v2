@@ -8,6 +8,7 @@
 // Columns are 1-based everywhere (webpack and Babel report 0-based columns – converted here).
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'build';
 const DEFAULT_SCRIPT = 'build:dev';
@@ -286,6 +287,8 @@ async function run(argv, overrides) {
   }
   if (outcome.code !== 0 || res.errorCount) res.result = 'BLOCKED';
   const outFile = OUT_DIR + '/build-' + n + '.json';
+  // build-<n>.json is read by report.js – it carries stubMode like the stdout output
+  stubMode.annotate(res, stubMode.modeFor(deps));
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(root, outFile), JSON.stringify(res, null, 2) + '\n', 'utf8');
@@ -324,8 +327,8 @@ async function main(argv, deps, io) {
   io = io || { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   try {
     const opts = parseArgs(argv || []);
-    const res = await run(argv, Object.assign({}, deps, { onOutput: opts.json ? () => {} : io.stdout }));
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(await run(argv, Object.assign({}, deps, { onOutput: opts.json ? () => {} : io.stdout })), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr(SCRIPT + ' crashed: ' + ((err && err.stack) || err) + '\n');

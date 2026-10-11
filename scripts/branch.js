@@ -6,6 +6,7 @@
 // Every git call goes through execFileSync with an argument array – user input is never put into a command string.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'branch';
 const STEPS_FILE = path.join(__dirname, '..', 'reference', 'commit-steps.json');
@@ -130,6 +131,8 @@ function run(argv, overrides) {
     tag: null,
     previousHead: null,
     previousBranch: null,
+    // create | on-target | resume (exists, has a start tag) | adopt (exists, no start tag – not created by the skill)
+    targetMode: null,
     commands: [],
   };
   const block = (message, extra) => res.blockers.push(Object.assign({ message: message }, extra || {}));
@@ -166,12 +169,18 @@ function run(argv, overrides) {
     return finish();
   }
 
+  // תגי migration-start-* בהיסטוריה של ref; הפורמט YYYYMMDD-HHmm ממוין נכון כמחרוזת
+  const startTags = (ref) => {
+    const r = git(['tag', '--list', 'migration-start-*', '--merged', ref]);
+    return r.ok ? r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).sort() : [];
+  };
+
   // HEAD עומד על היעד: הבראנץ' כבר נוצר. רק מוודאים שיש תג migration-start-* בהיסטוריה שלו
   const alreadyDone = () => {
     res.sourceBranch = null;
+    res.targetMode = 'on-target';
     res.notes.push('Branch ' + target + ' was created in a previous run and HEAD is already on it – this step is already done');
-    const tags = git(['tag', '--list', 'migration-start-*', '--merged', 'HEAD']);
-    const existing = tags.ok ? tags.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).sort() : [];
+    const existing = startTags('HEAD');
     if (existing.length) {
       res.tag = existing[existing.length - 1];
       res.result = 'NOOP';
@@ -213,22 +222,9 @@ function run(argv, overrides) {
   }
   const head = git(['rev-parse', '--verify', '-q', 'HEAD']);
   res.previousHead = head.ok && head.stdout.trim() ? head.stdout.trim() : null;
-
-  // --- source ----------------------------------------------------------------
-  // --source, אחרת defaultSource מהקונפיג, אחרת (null) הבראנץ' הנוכחי
-  const source = opts.source || config.defaultSource || res.previousBranch;
-  res.sourceBranch = source;
-  const sourceValid = source ? validBranch(source, 'source') : false;
   const targetValid = validBranch(target, 'target');
 
-  // --- already on the target → the step was done (idempotent re-run / resume after a failed tag) ---
-  if (targetValid && res.previousBranch === target) return alreadyDone();
-
-  if (sourceValid && targetValid && target === source) {
-    block('The target branch is the same as the source branch (' + target + ')', { check: 'branch-name' });
-  }
-
-  // --- clean working tree ----------------------------------------------------
+  // --- clean working tree (all four target states) ----------------------------
   const status = git(['status', '--porcelain']);
   if (!status.ok) {
     block('git status failed: ' + (firstLine(status.stderr) || status.message), { check: 'git-clean' });
@@ -239,6 +235,9 @@ function run(argv, overrides) {
       block('The working tree is not clean (' + files.length + ' files). Commit or stash manually, then run again', { check: 'git-clean', files: files });
     }
   }
+
+  // --- already on the target → the step was done (idempotent re-run / resume after a failed tag) ---
+  if (targetValid && res.previousBranch === target) return res.blockers.length ? finish() : alreadyDone();
 
   // --- local refs ------------------------------------------------------------
   const localBranchExists = (name) => git(['show-ref', '--verify', '--quiet', 'refs/heads/' + name]).ok;
@@ -266,6 +265,110 @@ function run(argv, overrides) {
       remoteHeads = new Set(ls.stdout.split(/\r?\n/).map((l) => l.split('\t')[1]).filter(Boolean)
         .map((ref) => ref.replace(/^refs\/heads\//, '')));
     }
+  }
+
+  // armed = HEAD was moved off the previous branch and can still go back
+  const rollback = () => {
+    if (!rollback.armed || !res.previousBranch) return;
+    const r = git(['checkout', res.previousBranch]);
+    res.commands.push({ command: displayCommand(['checkout', res.previousBranch]), status: r.ok ? 'done' : 'failed' });
+    res.notes.push(r.ok
+      ? 'Switched back to the previous branch ' + res.previousBranch
+      : 'Could not switch back to branch ' + res.previousBranch + ': ' + firstLine(r.stderr));
+  };
+  rollback.armed = false;
+
+  // היעד קיים ו-HEAD במקום אחר: עוברים אליו וממשיכים עליו – כל השלבים idempotent.
+  // יש תג migration-start-* בהיסטוריה שלו → resume. אין → adopt: הבראנץ' לא נוצר ע"י הסקיל,
+  // ומתייגים את הקצה הנוכחי שלו כנקודת שחזור (לא commit שלא הסתעפנו ממנו – זה היה הופך את ה-rollback לשגוי)
+  const useExistingTarget = (existsLocal, existsRemote) => {
+    res.sourceBranch = null;
+    const where = existsLocal && existsRemote ? 'locally and on origin' : existsLocal ? 'locally' : 'on origin';
+    if (opts.source) res.notes.push('Target branch ' + target + ' already exists – --source ' + opts.source + ' is not used');
+
+    // tags = null: עוד לא ידוע (יעד שקיים רק ב-origin ולא נמשך עדיין, ב-dry-run)
+    const classify = (tags, tip) => {
+      if (tags && tags.length) {
+        res.targetMode = 'resume';
+        res.tag = tags[tags.length - 1];
+        res.notes.push('Branch ' + target + ' already exists ' + where + ' with start tag ' + res.tag + ' – continuing an existing migration on it');
+        return;
+      }
+      res.targetMode = 'adopt';
+      res.tag = tag;
+      res.notes.push('Branch ' + target + ' already exists ' + where + ' but was NOT created by this skill (no migration-start-* tag in its history). ' +
+        'The migration will run on top of it – steps already done manually will return NOOP');
+      if (!tags) res.notes.push('origin/' + target + ' was not fetched yet – whether it has a start tag is checked again after the fetch');
+      if (tagCommit && tip && tagCommit !== tip) {
+        block('Tag ' + tag + ' already exists and points to a different commit (' + tagCommit.slice(0, 12) + ') – wait a minute and run again', { check: 'tag-exists' });
+      }
+    };
+
+    const checkout = existsLocal
+      ? { args: ['checkout', target], step: 'checkout-target' }
+      : { args: ['checkout', '-b', target, '--track', 'origin/' + target], step: 'checkout-target' };
+    const plan = (hasOrigin ? [{ args: ['fetch', 'origin', '--prune'], step: 'fetch', network: true }] : []).concat([checkout]);
+
+    if (opts.dryRun) {
+      const ref = existsLocal ? 'refs/heads/' + target : 'refs/remotes/origin/' + target;
+      const tip = commitOf(ref);
+      classify(tip ? startTags(ref) : null, tip);
+      res.commands = plan.map((p) => ({ command: displayCommand(p.args), status: 'planned' }));
+      if (res.targetMode === 'adopt') res.commands.push({ command: displayCommand(['tag', tag, 'HEAD']), status: 'planned' });
+      return finish();
+    }
+    if (res.blockers.length) return finish();
+
+    for (const p of plan) {
+      const r = git(p.args, p.network ? NETWORK_TIMEOUT_MS : LOCAL_TIMEOUT_MS);
+      res.commands.push({ command: displayCommand(p.args), status: r.ok ? 'done' : 'failed' });
+      if (!r.ok) {
+        if (p.step === 'fetch') {
+          const f = networkFailure(r, 'git fetch');
+          block(f.message, { check: 'fetch', kind: f.kind });
+        } else {
+          block(displayCommand(p.args) + ' failed: ' + (firstLine(r.stderr) || r.message), { check: p.step });
+        }
+        return finish();
+      }
+    }
+    rollback.armed = true;
+
+    // אחרי ה-checkout HEAD הוא הקצה של היעד – הסיווג הסופי נעשה מולו
+    const tip = commitOf('HEAD');
+    classify(startTags('HEAD'), tip);
+    if (res.blockers.length) { rollback(); return finish(); }
+    if (res.targetMode === 'resume') return finish();
+
+    const args = ['tag', tag, 'HEAD'];
+    const r = git(args);
+    res.commands.push({ command: displayCommand(args), status: r.ok ? 'done' : 'failed' });
+    if (!r.ok) {
+      block('Creating the restore-point tag ' + tag + ' on ' + target + ' failed: ' + (firstLine(r.stderr) || r.message), { check: 'tag' });
+      rollback();
+      return finish();
+    }
+    res.changes.push({ file: 'refs/tags/' + tag, rule: 'BRANCH.TAG', confidence: 'auto' });
+    res.notes.push('Tagged the current tip of ' + target + ' (' + (tip || '').slice(0, 12) + ') as ' + tag +
+      ' – the restore point is ' + target + ' as it was before this run');
+    return finish();
+  };
+
+  // --- target already exists, HEAD elsewhere → continue on it, never block -----
+  if (targetValid) {
+    const existsLocal = localBranchExists(target);
+    const existsRemote = !!(remoteHeads && remoteHeads.has(target));
+    if (existsLocal || existsRemote) return useExistingTarget(existsLocal, existsRemote);
+  }
+
+  // --- source ----------------------------------------------------------------
+  // --source, אחרת defaultSource מהקונפיג, אחרת (null) הבראנץ' הנוכחי
+  const source = opts.source || config.defaultSource || res.previousBranch;
+  res.sourceBranch = source;
+  res.targetMode = 'create';
+  const sourceValid = source ? validBranch(source, 'source') : false;
+  if (sourceValid && targetValid && target === source) {
+    block('The target branch is the same as the source branch (' + target + ')', { check: 'branch-name' });
   }
 
   // --- source: local or origin, upstream ---------------------------------------
@@ -299,17 +402,6 @@ function run(argv, overrides) {
     }
   }
 
-  // --- target must not exist yet ---------------------------------------------
-  if (targetValid) {
-    const existsLocal = localBranchExists(target);
-    const existsRemote = !!(remoteHeads && remoteHeads.has(target));
-    if (existsLocal || existsRemote) {
-      const where = existsLocal && existsRemote ? 'locally and on origin' : existsLocal ? 'locally' : 'on origin';
-      block('Target branch ' + target + ' already exists ' + where + ' – the service was probably migrated already. ' +
-        'Check ' + target + ', or pass --target <other name> to create a branch with a different name', { check: 'target-exists' });
-    }
-  }
-
   if (res.blockers.length) return finish();
 
   // --- plan ------------------------------------------------------------------
@@ -337,16 +429,6 @@ function run(argv, overrides) {
   }
 
   // --- execute ---------------------------------------------------------------
-  let movedOffPrevious = false;
-  const rollback = () => {
-    if (!movedOffPrevious || !res.previousBranch) return;
-    const r = git(['checkout', res.previousBranch]);
-    res.commands.push({ command: displayCommand(['checkout', res.previousBranch]), status: r.ok ? 'done' : 'failed' });
-    res.notes.push(r.ok
-      ? 'Switched back to the previous branch ' + res.previousBranch
-      : 'Could not switch back to branch ' + res.previousBranch + ': ' + firstLine(r.stderr));
-  };
-
   for (const p of plan) {
     // ה-pull יכול היה להזיז את המקור – התג שנבחר לשימוש חוזר חייב עדיין להצביע לאותו commit
     if (p.step === 'create-branch' && reuseTag && commitOf('HEAD') !== tagCommit) {
@@ -357,9 +439,9 @@ function run(argv, overrides) {
     const r = git(p.args, p.network ? NETWORK_TIMEOUT_MS : LOCAL_TIMEOUT_MS);
     res.commands.push({ command: displayCommand(p.args), status: r.ok ? 'done' : 'failed' });
     if (r.ok) {
-      if (p.step === 'checkout-source') movedOffPrevious = true;
+      if (p.step === 'checkout-source') rollback.armed = true;
       if (p.step === 'create-branch') {
-        movedOffPrevious = false; // branch created – no going back
+        rollback.armed = false; // branch created – no going back
         res.changes.push({ file: 'refs/heads/' + target, rule: 'BRANCH.CREATE', confidence: 'auto' });
       }
       if (p.step === 'tag') res.changes.push({ file: 'refs/tags/' + tag, rule: 'BRANCH.TAG', confidence: 'auto' });
@@ -403,8 +485,12 @@ function formatText(res) {
   const L = [];
   const sym = { done: '✓', failed: '⛔', planned: '→' };
   L.push('branch – create the target branch' + (res.dryRun ? ' [dry-run]' : ''));
-  L.push('   source: ' + (res.sourceBranch || '?') + (res.upstream ? ' (upstream: ' + res.upstream + ')' : '') +
-    ' → target: ' + (res.targetBranch || '?') + ' | tag: ' + (res.tag || '?'));
+  if (res.targetMode === 'resume' || res.targetMode === 'adopt' || res.targetMode === 'on-target') {
+    L.push('   existing target: ' + (res.targetBranch || '?') + ' (' + res.targetMode + ') | tag: ' + (res.tag || '?'));
+  } else {
+    L.push('   source: ' + (res.sourceBranch || '?') + (res.upstream ? ' (upstream: ' + res.upstream + ')' : '') +
+      ' → target: ' + (res.targetBranch || '?') + ' | tag: ' + (res.tag || '?'));
+  }
   L.push('   previous HEAD: ' + (res.previousBranch || 'detached') + ' @ ' + (res.previousHead ? res.previousHead.slice(0, 12) : '?'));
   if (res.commands.length) {
     L.push('');
@@ -430,8 +516,8 @@ function main(argv, deps, io) {
   };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr('branch crashed: ' + ((err && err.stack) || err) + '\n');

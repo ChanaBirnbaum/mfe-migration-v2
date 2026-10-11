@@ -149,6 +149,81 @@ test('registry failure for @ips/mfe-shared-deps → BLOCKED, nothing written', (
   assert.strictEqual(pkgOf(root), read('typical', 'before.json'));
 });
 
+// ---- stub mode (approved in run.js) ----
+
+const stubMode = require('../scripts/stub-mode');
+const STUB = { active: true, packages: ['@ips/mfe-shared-deps'], source: 'env' };
+const STUB_SPEC = 'file:' + path.join(__dirname, '..', 'test-fixtures', 'ips-mfe-shared-deps').split(path.sep).join('/');
+const offline = () => { throw new Error('npm ERR! code E404'); };
+
+test('stub mode: @ips/mfe-shared-deps → file:<absolute stub path> in dependencies, everything else unchanged', () => {
+  const normal = repo(read('typical', 'before.json'));
+  run([], deps(normal));
+  const root = repo(read('typical', 'before.json'));
+  const res = run([], { cwd: root, npmView: offline, stub: STUB });
+  assert.strictEqual(res.result, 'REVIEW', JSON.stringify(res.blockers));
+  const pkg = JSON.parse(pkgOf(root));
+  assert.strictEqual(pkg.dependencies['@ips/mfe-shared-deps'], STUB_SPEC);
+  assert.ok(path.isAbsolute(STUB_SPEC.slice(5)));
+  assert.strictEqual(STUB_SPEC, stubMode.stubSpec('@ips/mfe-shared-deps'));
+  // the only difference from a normal run is that one value
+  assert.strictEqual(pkgOf(root), pkgOf(normal).replace('"^1.4.0"', JSON.stringify(STUB_SPEC)));
+  assert.match(res.notes.join(' '), /must NOT be committed/);
+});
+
+test('stub mode: an already-declared real version is replaced by the stub', () => {
+  const root = repo(JSON.stringify({ name: 'x', dependencies: { react: '^17.0.2', '@ips/mfe-shared-deps': '^1.2.0' } }, null, 2) + '\n');
+  run([], { cwd: root, npmView: offline, stub: STUB });
+  assert.strictEqual(JSON.parse(pkgOf(root)).dependencies['@ips/mfe-shared-deps'], STUB_SPEC);
+});
+
+test('stub mode but the registry HAS the package → BLOCKED, the stub is never written', () => {
+  const root = repo(read('typical', 'before.json'));
+  const res = run([], { cwd: root, npmView: () => '1.4.0', stub: STUB });
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.match(res.blockers[0].message, /is available in the registry \(1\.4\.0\) – stub mode must not be used/);
+  assert.strictEqual(pkgOf(root), read('typical', 'before.json'));
+});
+
+test('stub mode is idempotent: second run → NOOP', () => {
+  const root = repo(read('already-migrated', 'before.json'));
+  run([], { cwd: root, npmView: offline, stub: STUB });
+  const again = run([], { cwd: root, npmView: offline, stub: STUB });
+  assert.strictEqual(again.result, 'NOOP');
+});
+
+test('not in stub mode, but package.json still points to the stub → replaced with the real version', () => {
+  const root = repo(JSON.stringify({ name: 'x', dependencies: { react: '^17.0.2', '@ips/mfe-shared-deps': STUB_SPEC } }, null, 2) + '\n');
+  const res = run([], Object.assign(deps(root), { stub: stubMode.INACTIVE }));
+  assert.strictEqual(JSON.parse(pkgOf(root)).dependencies['@ips/mfe-shared-deps'], '^1.4.0');
+  assert.match(res.notes.join(' '), /pointed to the local test stub .* replaced with the real package/);
+});
+
+test('stub mode only touches packages that are stubbed – an env list with a public package is ignored', () => {
+  const mode = stubMode.detect({ env: { MFE_MIGRATION_STUB: 'react,@ips/mfe-shared-deps' }, cwd: os.tmpdir() });
+  assert.deepStrictEqual(mode.packages, ['@ips/mfe-shared-deps']);
+  assert.strictEqual(stubMode.detect({ env: { MFE_MIGRATION_STUB: 'react' }, cwd: os.tmpdir() }).active, false);
+});
+
+test('stub mode --json: stubMode: true at the top level, warning first; text output starts with a banner', () => {
+  const env = Object.assign({}, process.env, { MFE_MIGRATION_STUB: '@ips/mfe-shared-deps' });
+  let out = '';
+  main(['--json', '--dry-run'], { cwd: repo(read('typical', 'before.json')), npmView: offline, env: env }, { stdout: (s) => { out += s; }, stderr: () => {} });
+  const res = JSON.parse(out);
+  assert.strictEqual(res.stubMode, true);
+  assert.deepStrictEqual(res.stubPackages, ['@ips/mfe-shared-deps']);
+  assert.match(res.notes[0], /^STUB MODE: @ips\/mfe-shared-deps is a local test stub/);
+  out = '';
+  main(['--dry-run'], { cwd: repo(read('typical', 'before.json')), npmView: offline, env: env }, { stdout: (s) => { out += s; }, stderr: () => {} });
+  assert.match(out.split('\n')[0], /^⚠ STUB MODE – @ips\/mfe-shared-deps is a local test stub/);
+});
+
+test('not in stub mode: no stubMode field in the output', () => {
+  let out = '';
+  main(['--json', '--dry-run'], Object.assign(deps(repo(read('typical', 'before.json'))), { env: {} }), { stdout: (s) => { out += s; }, stderr: () => {} });
+  assert.strictEqual(JSON.parse(out).stubMode, undefined);
+});
+
 test('invalid JSON / missing file → BLOCKED, exit 0', () => {
   let out = '';
   const io = { stdout: (s) => { out += s; }, stderr: () => {} };

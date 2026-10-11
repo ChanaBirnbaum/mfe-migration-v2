@@ -6,6 +6,7 @@
 // npm output is streamed to stdout in real time (never to stderr – see the contract).
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'install';
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -230,7 +231,9 @@ async function run(argv, overrides) {
 
   res.installedPackages = countInstalled(outcome.output, fs, path.join(root, 'package-lock.json'));
   res.changes.push({ file: 'package-lock.json', rule: 'INSTALL.LOCK', confidence: 'auto', detail: 'regenerated' });
-  res.notes.push('package-lock.json was regenerated – it needs to be committed');
+  res.notes.push(stubMode.modeFor(deps).active
+    ? 'package-lock.json was regenerated against the local test stub – it must NOT be committed. Re-run install on the internal network'
+    : 'package-lock.json was regenerated – it needs to be committed');
   const peer = res.warnings.filter((w) => /ERESOLVE|peer dep/i.test(w));
   if (peer.length) res.notes.push(peer.length + ' peer dependencies warnings – the install succeeded, but they are worth reviewing');
   return res;
@@ -258,8 +261,8 @@ async function main(argv, deps, io) {
   try {
     const opts = parseArgs(argv || []);
     // ב---json לא מזרימים: הפלט חייב להיות JSON תקין בלבד
-    const res = await run(argv, Object.assign({}, deps, { onOutput: opts.json ? () => {} : io.stdout }));
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(await run(argv, Object.assign({}, deps, { onOutput: opts.json ? () => {} : io.stdout })), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr(SCRIPT + ' crashed: ' + ((err && err.stack) || err) + '\n');

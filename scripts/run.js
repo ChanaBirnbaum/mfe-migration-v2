@@ -7,6 +7,7 @@
 // Exit code 0 for every expected outcome (incl. PAUSE / FAILED step); 1 only if run.js itself crashes.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'run';
 const STATE_FILE = '.migration/state.json';
@@ -80,12 +81,12 @@ function parseArgs(argv) {
 
 function defaultRunStep(cwd, env) {
   const cp = require('child_process');
-  return (script, args) => new Promise((resolve) => {
+  return (script, args, extraEnv) => new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     let child;
     try {
-      child = cp.spawn(process.execPath, [path.join(__dirname, script + '.js')].concat(args), { cwd: cwd, env: env, windowsHide: true });
+      child = cp.spawn(process.execPath, [path.join(__dirname, script + '.js')].concat(args), { cwd: cwd, env: Object.assign({}, env, extraEnv || {}), windowsHide: true });
     } catch (err) {
       resolve({ exitCode: null, stdout: '', stderr: err.message });
       return;
@@ -113,7 +114,14 @@ async function run(argv, overrides) {
   const opts = parseArgs(argv || []);
   const out = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, steps: [], pause: null, next: null, state: null };
   const say = (line) => deps.print(line + '\n');
-  const stop = (result, pause) => { out.result = result; out.pause = pause; return out; };
+  let stubPackages = () => [];
+  const stop = (result, pause) => {
+    out.result = result;
+    out.pause = pause;
+    // every --json output of a stub run carries stubMode at the top level
+    if (stubPackages().length) { out.stubMode = true; out.stubPackages = stubPackages(); }
+    return out;
+  };
 
   if (opts.errors.length) {
     opts.errors.forEach((e) => say('⛔ ' + e));
@@ -153,10 +161,15 @@ async function run(argv, overrides) {
   }
   const fresh = !state || (!opts.resume && !opts.only && !(opts.from && unfinished));
   if (fresh) {
+    const prev = state;
     state = {
       startedAt: deps.now().toISOString(), service: service, completed: [], current: STEP_IDS[0],
       results: {}, answers: {}, buildIterations: 0, buildWindow: { history: [] },
     };
+    // --from <a later step> does not re-run preflight, so an approved stub decision stays; --from preflight decides again
+    if (prev && opts.from && opts.from !== STEP_IDS[0] && prev.stubMode) {
+      ['stubMode', 'stubCandidates', 'stubRegistry'].forEach((k) => { if (prev[k] !== undefined) state[k] = prev[k]; });
+    }
   }
   Object.assign(state.answers, opts.answers);
   state.buildWindow = state.buildWindow || { history: [] };
@@ -188,12 +201,75 @@ async function run(argv, overrides) {
   const answerHint = () => Object.keys(state.answers).map((k) => ' --answer ' + k + '=' + state.answers[k]).join('');
   let worstDry = 'OK';
 
+  // ---- stub mode ----
+  // preflight מדווח stubCandidates (פנימית + לא ב-registry). ההחלטה כאן, באישור אדם, ונשמרת ב-state.stubMode.
+  // כל שלב מקבל את MFE_MIGRATION_STUB – תמיד, גם ריק, כדי שערך שהוגדר ידנית בסביבה לא יפעיל stub
+  const internal = stubMode.internalPackages();
+  stubPackages = () => (state.stubMode && state.stubMode.approved === true ? stubMode.allowed(state.stubMode.packages, internal) : []);
+  const stubEnv = () => ({ [stubMode.ENV_VAR]: stubPackages().join(',') });
+  const stubPending = () => stubMode.allowed(state.stubCandidates || [], internal).length > 0 && !stubPackages().length;
+  const sayStep = (line) => {
+    say(line);
+    if (stubPackages().length) say('   ⚠ STUB MODE – ' + stubPackages().join(', ') + ' is a local test stub: pipeline mechanics only, nothing is committed');
+  };
+  const stubGate = (i, step) => {
+    const cands = stubMode.allowed(state.stubCandidates || [], internal);
+    const registry = state.stubRegistry || 'the configured registry';
+    const answer = state.answers['stub.mode'];
+    const explain = () => {
+      say('   ⚠ Internal package(s) not found in ' + registry + ': ' + cands.join(', '));
+      say('   The pipeline can continue with a local test stub instead: ' + cands.map((p) => path.relative(SKILL_ROOT, stubMode.stubDir(p)).split(path.sep).join('/')).join(', '));
+      say('   ⚠ Such a run validates the pipeline mechanics only – NOT the shared configuration against the real package.');
+      say('   ⚠ No commits are made in such a run: package.json would depend on a local file: path.');
+    };
+    if (answer !== undefined && answer !== 'yes') {
+      // לא אושר → נעצר כמו היום: חבילה שלא נמצאה ב-registry חוסמת את preflight
+      const blockers = cands.map((p) => ({ message: p + ': package not found in ' + registry + ' (internal package; stub mode was not approved)', package: p }));
+      say(label(0, STEP_IDS[0]) + '⛔ BLOCKED   stub mode not approved (--answer stub.mode=' + answer + ')');
+      printBlocked(say, { blockers: blockers });
+      delete state.answers['stub.mode'];
+      state.current = STEP_IDS[0];
+      state.completed = state.completed.filter((s) => s !== STEP_IDS[0]);
+      state.results[STEP_IDS[0]] = 'BLOCKED';
+      save();
+      out.next = RUN_CMD + ' --resume';
+      say('');
+      say('Run where the internal registry is reachable, then: ' + out.next + ' (preflight runs again)');
+      out.state = state;
+      return stop('PAUSE', { kind: 'blocked', step: STEP_IDS[0], blockers: blockers });
+    }
+    if (answer === 'yes' || opts.yes || opts.dryRun) {
+      const how = answer === 'yes' ? 'answer' : opts.yes ? '--yes' : 'dry-run';
+      state.stubMode = { approved: true, packages: cands, registry: state.stubRegistry || null, approvedAt: deps.now().toISOString(), approvedBy: how };
+      say('⚠ STUB MODE ' + (how === 'answer' ? 'approved' : how === '--yes' ? 'approved automatically (--yes)' : '[dry-run: simulated – a real run asks first]'));
+      explain();
+      save();
+      return null;
+    }
+    save();
+    say(label(i, step.id) + '⏸ PAUSE     Approval needed: continue with a local stub for ' + cands.join(', '));
+    explain();
+    out.steps.push(stepEntry(step.id, 'PAUSE', null, null, { reason: 'stub-mode' }));
+    out.next = RUN_CMD + ' --resume --answer stub.mode=yes';
+    say('');
+    say('Next: ' + out.next);
+    say('Without the stub: run where the internal registry is reachable – the pipeline stops here');
+    out.state = state;
+    return stop('PAUSE', { kind: 'stub-mode', step: step.id, key: 'stub.mode', packages: cands, registry: state.stubRegistry || null });
+  };
+
   for (let i = startIdx; i < endIdx; i++) {
     const step = STEPS[i];
     const script = step.script || step.id;
     const args = ['--json'].concat(step.args || []);
     if (opts.dryRun) args.push('--dry-run');
     if (!opts.only) state.current = step.id;
+
+    // ---- decision: stub mode (preflight reported stub candidates) – before any step after preflight ----
+    if (step.id !== STEP_IDS[0] && stubPending()) {
+      const stopped = stubGate(i, step);
+      if (stopped) return stopped;
+    }
 
     // ---- approval: source branch (target name is optional, defaults to digital_V2) ----
     if (step.approval === 'branch.source') {
@@ -203,17 +279,31 @@ async function run(argv, overrides) {
       if (sourceAnswer) args.push('--source', sourceAnswer);
       else if (!opts.yes && !opts.dryRun) {
         // מה branch.js יעשה בפועל: מקור (ברירת מחדל: הבראנץ' הנוכחי) → יעד
-        const probe = await runStep(script, ['--json', '--dry-run'].concat(targetAnswer ? ['--target', targetAnswer] : []));
+        const probe = await runStep(script, ['--json', '--dry-run'].concat(targetAnswer ? ['--target', targetAnswer] : []), stubEnv());
         let plan = null;
         try { plan = JSON.parse(probe.stdout); } catch (_) { plan = null; }
         // NOOP = כבר עומדים על היעד; אין מה לאשר – השלב ירוץ (וישלים תג חסר אם צריך)
         if (!(plan && plan.result === 'NOOP')) {
-          const source = (plan && plan.sourceBranch) || null;
+          const mode = (plan && plan.targetMode) || 'create';
+          const existing = mode === 'resume' || mode === 'adopt';
+          // יעד קיים: אין מקור – branch.js מתעלם מ---source, והאישור הוא על הבראנץ' הנוכחי
+          const source = existing ? (plan.previousBranch || null) : (plan && plan.sourceBranch) || null;
           const target = (plan && plan.targetBranch) || targetAnswer || null;
           save();
-          const current = source && plan.previousBranch === source ? ' (current branch)' : '';
-          say(label(i, step.id) + '⏸ PAUSE     Approval needed: create ' + (target || '<target>') + ' from ' + (source || '<source>') + current);
-          say('   branch from: ' + (source || '?') + '   →   new branch: ' + (target || '?'));
+          if (mode === 'adopt') {
+            // ההחלטה האנושית על בראנץ' שלא נוצר ע"י הסקיל נמצאת כאן – branch.js לא חוסם
+            sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: run the migration on the EXISTING branch ' + (target || '<target>'));
+            say('   ⚠ Branch ' + (target || '?') + ' already exists and was NOT created by this skill (no migration-start-* tag).');
+            say('   ⚠ The migration will run on top of it; steps already done manually will return NOOP.');
+            say('   ⚠ Restore point: a new tag ' + (plan.tag || 'migration-start-*') + ' on the current tip of ' + (target || '?') + '.');
+          } else if (mode === 'resume') {
+            sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: continue the existing migration on ' + (target || '<target>') + ' (start tag ' + (plan.tag || '?') + ')');
+            say('   switch from: ' + (source || '?') + '   →   existing branch: ' + (target || '?'));
+          } else {
+            const current = source && plan.previousBranch === source ? ' (current branch)' : '';
+            sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: create ' + (target || '<target>') + ' from ' + (source || '<source>') + current);
+            say('   branch from: ' + (source || '?') + '   →   new branch: ' + (target || '?'));
+          }
           if (plan && plan.blockers && plan.blockers.length) {
             say('   The pre-check found blockers to resolve before approving:');
             printBlocked(say, plan);
@@ -224,21 +314,46 @@ async function run(argv, overrides) {
           say('Next: ' + out.next);
           say('Different source: --answer branch.source=<name>   |   different target name: --answer branch.target=<name>');
           out.state = state;
-          return stop('PAUSE', { kind: 'approval', step: step.id, key: 'branch.source', source: source, target: target, suggestion: source });
+          return stop('PAUSE', { kind: 'approval', step: step.id, key: 'branch.source', source: source, target: target, suggestion: source, targetMode: mode, targetExisted: existing });
         }
       }
     }
 
     // ---- run ----
     const t0 = Date.now();
-    const r = await runStep(script, args);
+    let r;
+    if (script === 'commit' && stubPackages().length) {
+      // מצב stub: שלבי ה-commit מדולגים לגמרי – commit.js לא מורץ בכלל (והוא עצמו מסרב גם כן)
+      r = { exitCode: 0, stdout: JSON.stringify(stubMode.annotate({
+        script: 'commit', result: 'NOOP', changes: [], manual: [], blockers: [], step: (step.args || [])[1] || null, skipped: 'stub-mode',
+        notes: ['Skipped – stub mode. package.json depends on a local test stub (file:…); a migration branch with such a dependency is broken for anyone ' +
+          'who pulls it, so nothing is committed in a stub run. The changes stay uncommitted in the working tree'],
+      }, { active: true, packages: stubPackages() })) };
+    } else {
+      r = await runStep(script, args, stubEnv());
+    }
     const ms = Date.now() - t0;
     let res = null;
     if (r.exitCode === 0) { try { res = JSON.parse(r.stdout); } catch (_) { res = null; } }
 
+    // preflight: who may be stubbed. Available again → stub mode is dropped (never stub what the registry has)
+    if (res && step.id === STEP_IDS[0]) {
+      const cands = stubMode.allowed(res.stubCandidates || [], internal);
+      if (cands.length) {
+        const same = stubPackages().join(',') === cands.join(',');
+        state.stubCandidates = cands;
+        state.stubRegistry = (res.environment && res.environment.registryUrl) || null;
+        if (!same) delete state.stubMode;
+      } else {
+        delete state.stubCandidates;
+        delete state.stubRegistry;
+        delete state.stubMode;
+      }
+    }
+
     if (!res) {
       const tail = (r.stderr || r.stdout || '').split(/\r?\n/).filter(Boolean).slice(-15);
-      say(label(i, step.id) + '💥 FAILED    ' + (r.exitCode === 0 ? 'output is not JSON' : 'exit ' + r.exitCode) + '  ' + fmtDuration(ms));
+      sayStep(label(i, step.id) + '💥 FAILED    ' + (r.exitCode === 0 ? 'output is not JSON' : 'exit ' + r.exitCode) + '  ' + fmtDuration(ms));
       tail.forEach((l) => say('   | ' + l));
       state.results[step.id] = 'FAILED';
       save();
@@ -258,7 +373,7 @@ async function run(argv, overrides) {
 
     // ---- dry-run: simulate everything, never pause – but show why ----
     if (opts.dryRun) {
-      say(label(i, step.id) + (SYMBOL[res.result] || '?') + ' ' + res.result.padEnd(10) + fmtDuration(ms));
+      sayStep(label(i, step.id) + (SYMBOL[res.result] || '?') + ' ' + res.result.padEnd(10) + fmtDuration(ms));
       printBlocked(say, res);
       if (res.result === 'BLOCKED') worstDry = 'BLOCKED';
       else if (res.result === 'REVIEW' && worstDry !== 'BLOCKED') worstDry = 'REVIEW';
@@ -282,7 +397,7 @@ async function run(argv, overrides) {
         const why = stalled >= BUILD_NO_PROGRESS_ROUNDS
           ? 'No progress: the error count did not go down in ' + stalled + ' rounds (' + w.history.join(' → ') + ')'
           : 'Reached the maximum of ' + BUILD_MAX_ROUNDS + ' fix rounds (' + w.history.join(' → ') + ')';
-        say(label(i, step.id) + '⏸ PAUSE     ' + why);
+        sayStep(label(i, step.id) + '⏸ PAUSE     ' + why);
         state.buildWindow = { history: [] }; // --resume after a decision starts a new window
         save();
         out.next = RUN_CMD + ' --resume';
@@ -290,7 +405,7 @@ async function run(argv, overrides) {
         say('A human decision is needed before continuing the fixes. To run more rounds: ' + out.next);
         return stop('PAUSE', { kind: 'build-stalled', step: step.id, history: w.history, reason: why });
       }
-      say(label(i, step.id) + '🔧 PAUSE_FOR_FIX ' + res.errorCount + ' errors' + trend + ' | round ' + w.history.length + '/' + BUILD_MAX_ROUNDS + '  ' + fmtDuration(ms));
+      sayStep(label(i, step.id) + '🔧 PAUSE_FOR_FIX ' + res.errorCount + ' errors' + trend + ' | round ' + w.history.length + '/' + BUILD_MAX_ROUNDS + '  ' + fmtDuration(ms));
       out.next = RUN_CMD + ' --resume';
       say('');
       say('Fix the errors, then: ' + out.next);
@@ -298,7 +413,7 @@ async function run(argv, overrides) {
     }
 
     if (res.result === 'OK' || res.result === 'NOOP') {
-      say(label(i, step.id) + SYMBOL.OK + ' ' + res.result.padEnd(10) + fmtDuration(ms));
+      sayStep(label(i, step.id) + SYMBOL.OK + ' ' + res.result.padEnd(10) + fmtDuration(ms));
       if (step.fixLoop) state.buildWindow = { history: [] };
       if (!opts.only) { if (state.completed.indexOf(step.id) === -1) state.completed.push(step.id); state.current = STEP_IDS[i + 1] || null; }
       save();
@@ -307,7 +422,7 @@ async function run(argv, overrides) {
 
     if (res.result === 'REVIEW') {
       // השלב רץ ושינה – ההמשך הוא מהשלב הבא, אחרי שהאדם בדק
-      say(label(i, step.id) + '⏸ REVIEW    ' + fmtDuration(ms));
+      sayStep(label(i, step.id) + '⏸ REVIEW    ' + fmtDuration(ms));
       if (!opts.only) { if (state.completed.indexOf(step.id) === -1) state.completed.push(step.id); state.current = STEP_IDS[i + 1] || null; }
       save();
       printReview(say, res);
@@ -319,7 +434,7 @@ async function run(argv, overrides) {
     }
 
     // BLOCKED – השלב לא הושלם; --resume מריץ אותו שוב
-    say(label(i, step.id) + '⛔ BLOCKED   ' + fmtDuration(ms));
+    sayStep(label(i, step.id) + '⛔ BLOCKED   ' + fmtDuration(ms));
     save();
     printBlocked(say, res);
     out.next = RUN_CMD + ' --resume';
@@ -340,7 +455,14 @@ async function run(argv, overrides) {
     state.finishedAt = deps.now().toISOString();
     save();
     say('');
-    say('✅ The pipeline is complete. Report: MIGRATION-V2-REPORT.md (not committed)');
+    if (stubPackages().length) {
+      say('⚠ The pipeline completed IN STUB MODE – ' + stubPackages().join(', ') + ' was a local test stub, not the real package.');
+      say('⚠ Only the pipeline mechanics were validated (branch, codemods, install, build, report) – NOT the shared configuration against the real package.');
+      say('⚠ Nothing was committed: the working tree is left with uncommitted changes, and package.json points to a local file: path – do not commit it.');
+      say('⚠ Re-run on the internal network before any real use: ' + RUN_CMD + ' --from preflight. Report: MIGRATION-V2-REPORT.md (not committed)');
+    } else {
+      say('✅ The pipeline is complete. Report: MIGRATION-V2-REPORT.md (not committed)');
+    }
   }
   return stop('OK', null);
 }
@@ -402,7 +524,10 @@ function printDiagnostics(say, res) {
 }
 
 function formatSummary(out) {
-  return 'RESULT: ' + out.result + '\n';
+  const stub = out.stubMode
+    ? '⚠ STUB MODE (' + (out.stubPackages || []).join(', ') + ') – pipeline mechanics only, NOT a validated migration; nothing committed. See MIGRATION-V2-REPORT.md\n'
+    : '';
+  return stub + 'RESULT: ' + out.result + '\n';
 }
 
 async function main(argv, deps, io) {

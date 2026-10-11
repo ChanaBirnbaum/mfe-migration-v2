@@ -29,9 +29,11 @@ const stepIdOf = (script, args) => {
 function mock(plan) {
   const calls = [];
   const counters = {};
-  const runStep = async (script, args) => {
+  const envs = [];
+  const runStep = async (script, args, env) => {
     const id = stepIdOf(script, args);
     calls.push({ id: id, args: args });
+    envs.push({ id: id, env: env });
     let r = plan[id];
     if (Array.isArray(r)) { counters[id] = (counters[id] || 0); r = r[Math.min(counters[id]++, r.length - 1)]; }
     if (typeof r === 'function') r = r(args);
@@ -39,7 +41,7 @@ function mock(plan) {
     const body = Object.assign({ script: script, result: 'OK', changes: [], manual: [], blockers: [], notes: [] }, r || {});
     return { exitCode: 0, stdout: JSON.stringify(body) };
   };
-  return { runStep: runStep, calls: calls, ran: () => calls.filter((c) => c.args.indexOf('--dry-run') === -1 || c.id !== 'branch').map((c) => c.id) };
+  return { runStep: runStep, calls: calls, envs: envs, ran: () => calls.filter((c) => c.args.indexOf('--dry-run') === -1 || c.id !== 'branch').map((c) => c.id) };
 }
 
 async function go(root, argv, m) {
@@ -84,6 +86,30 @@ test('approval PAUSE shows probe blockers (digital_V2 already exists)', async ()
   const out = await go(root, [], m);
   assert.match(out, /⛔ Target branch digital_V2 already exists on origin/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
+});
+
+test('probe says adopt (digital_V2 exists, not created by the skill) → approval states it explicitly, no "create"', async () => {
+  const root = repo();
+  const m = mock({ branch: { targetMode: 'adopt', sourceBranch: null, previousBranch: 'develop', targetBranch: 'digital_V2', tag: 'migration-start-20261005-1407' } });
+  const out = await go(root, [], m);
+  assert.match(out, /\[ 3\/18] branch\s+⏸ PAUSE {5}Approval needed: run the migration on the EXISTING branch digital_V2/);
+  assert.match(out, /⚠ Branch digital_V2 already exists and was NOT created by this skill/);
+  assert.match(out, /⚠ The migration will run on top of it; steps already done manually will return NOOP/);
+  assert.match(out, /⚠ Restore point: a new tag migration-start-20261005-1407 on the current tip of digital_V2/);
+  assert.doesNotMatch(out, /create digital_V2 from/);
+  assert.ok(out.indexOf('Next: ' + RUN_CMD + ' --resume --answer branch.source=develop') !== -1, out);
+  const res = JSON.parse(await go(repo(), ['--json'], mock({ branch: { targetMode: 'adopt', previousBranch: 'develop', targetBranch: 'digital_V2' } })));
+  assert.strictEqual(res.pause.targetMode, 'adopt');
+  assert.strictEqual(res.pause.targetExisted, true);
+});
+
+test('probe says resume (digital_V2 exists with a start tag) → approval to continue the existing migration', async () => {
+  const root = repo();
+  const m = mock({ branch: { targetMode: 'resume', sourceBranch: null, previousBranch: 'main', targetBranch: 'digital_V2', tag: 'migration-start-20261001-0900' } });
+  const out = await go(root, [], m);
+  assert.match(out, /Approval needed: continue the existing migration on digital_V2 \(start tag migration-start-20261001-0900\)/);
+  assert.match(out, /switch from: main {3}→ {3}existing branch: digital_V2/);
+  assert.doesNotMatch(out, /NOT created by this skill/);
 });
 
 test('probe says NOOP (already on digital_V2) → no approval pause, branch runs and the pipeline continues', async () => {
@@ -408,4 +434,153 @@ test('real child process: --only scan runs scripts/scan.js and stores its result
   const saved = JSON.parse(fs.readFileSync(path.join(root, '.migration', 'scan.json'), 'utf8'));
   assert.strictEqual(saved.inventory.muiFiles[0].file, 'src/App.jsx');
   assert.ok(fs.existsSync(path.join(root, '.migration', 'inventory.json')));
+});
+
+// ---- stub mode: preflight reports, run.js decides with approval ----
+
+const STUB_PKG = '@ips/mfe-shared-deps';
+const PREFLIGHT_STUB = { stubCandidates: [STUB_PKG], environment: { registryUrl: 'https://registry.npmjs.org/' } };
+const stubEnvOf = (m, id) => (m.envs.find((e) => e.id === id) || {}).env;
+const COMMITS = ['commit-mechanical', 'commit-infra', 'commit-build-fixes'];
+
+test('stub candidates → PAUSE stub-mode before scan: which package, which registry, mechanics only, no commits', async () => {
+  const root = repo();
+  const m = mock({ preflight: PREFLIGHT_STUB });
+  const out = await go(root, [], m);
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight']);
+  assert.match(out, /\[ 2\/18] scan\s+⏸ PAUSE {5}Approval needed: continue with a local stub for @ips\/mfe-shared-deps/);
+  assert.match(out, /⚠ Internal package\(s\) not found in https:\/\/registry\.npmjs\.org\/: @ips\/mfe-shared-deps/);
+  assert.match(out, /continue with a local test stub instead: test-fixtures\/ips-mfe-shared-deps/);
+  assert.match(out, /validates the pipeline mechanics only – NOT the shared configuration against the real package/);
+  assert.match(out, /No commits are made in such a run/);
+  assert.ok(out.indexOf('Next: ' + RUN_CMD + ' --resume --answer stub.mode=yes') !== -1, out);
+  assert.strictEqual(last(out), 'RESULT: PAUSE');
+  const s = state(root);
+  assert.deepStrictEqual(s.completed, ['preflight']);
+  assert.strictEqual(s.current, 'scan');
+  assert.deepStrictEqual(s.stubCandidates, [STUB_PKG]);
+  assert.strictEqual(s.stubMode, undefined);
+
+  const res = JSON.parse(await go(repo(), ['--json'], mock({ preflight: PREFLIGHT_STUB })));
+  assert.deepStrictEqual(res.pause, { kind: 'stub-mode', step: 'scan', key: 'stub.mode', packages: [STUB_PKG], registry: 'https://registry.npmjs.org/' });
+  assert.strictEqual(res.stubMode, undefined, 'not approved yet');
+});
+
+test('--resume --answer stub.mode=yes → saved in state.stubMode, every step gets the stub env, the next resume does not ask again', async () => {
+  const root = repo();
+  await go(root, [], mock({ preflight: PREFLIGHT_STUB }));
+  const m = mock(BRANCH_PROBE);
+  const out = await go(root, ['--resume', '--answer', 'stub.mode=yes'], m);
+  assert.match(out, /⚠ STUB MODE approved/);
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ['scan', 'branch']);
+  m.envs.forEach((e) => assert.deepStrictEqual(e.env, { MFE_MIGRATION_STUB: STUB_PKG }, e.id));
+  assert.match(out, /\[ 2\/18] scan\s+✓ OK.*\n {3}⚠ STUB MODE – @ips\/mfe-shared-deps is a local test stub/);
+  const s = state(root);
+  assert.strictEqual(s.stubMode.approved, true);
+  assert.deepStrictEqual(s.stubMode.packages, [STUB_PKG]);
+  assert.strictEqual(s.stubMode.approvedBy, 'answer');
+
+  const m2 = mock({ 'package-json': { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
+  const out2 = await go(root, ['--resume', '--answer', 'branch.source=develop'], m2);
+  assert.doesNotMatch(out2, /Approval needed: continue with a local stub/);
+  assert.deepStrictEqual(m2.calls.map((c) => c.id), ['branch', 'package-json']);
+  assert.deepStrictEqual(stubEnvOf(m2, 'package-json'), { MFE_MIGRATION_STUB: STUB_PKG });
+});
+
+test('--yes with stub candidates: approved automatically, warnings kept, commit steps never run, stub summary at the end', async () => {
+  const root = repo();
+  const m = mock({ preflight: PREFLIGHT_STUB });
+  let out = '';
+  await main(['--yes'], { cwd: root, runStep: m.runStep }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error(s); } });
+  assert.match(out, /⚠ STUB MODE approved automatically \(--yes\)/);
+  assert.match(out, /validates the pipeline mechanics only/);
+  // the three commit steps are skipped entirely – commit.js is never spawned
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ALL.filter((id) => COMMITS.indexOf(id) === -1));
+  COMMITS.forEach((id) => {
+    assert.match(out, new RegExp(id + '\\s+✓ NOOP'));
+    const saved = JSON.parse(fs.readFileSync(path.join(root, '.migration', id + '.json'), 'utf8'));
+    assert.strictEqual(saved.result, 'NOOP');
+    assert.strictEqual(saved.stubMode, true);
+    assert.match(saved.notes.join(' '), /Skipped – stub mode/);
+  });
+  // a warning line under every step after preflight (preflight ran before the decision)
+  assert.strictEqual((out.match(/^ {3}⚠ STUB MODE – /mg) || []).length, ALL.length - 1);
+  assert.doesNotMatch(out, /✅ The pipeline is complete/);
+  assert.match(out, /⚠ The pipeline completed IN STUB MODE/);
+  assert.match(out, /NOT the shared configuration against the real package/);
+  assert.match(out, /Nothing was committed: the working tree is left with uncommitted changes/);
+  assert.match(out, /Re-run on the internal network before any real use/);
+  assert.match(out, /⚠ STUB MODE \(@ips\/mfe-shared-deps\) – pipeline mechanics only, NOT a validated migration; nothing committed.*\nRESULT: OK\n$/);
+  assert.strictEqual(state(root).stubMode.approvedBy, '--yes');
+});
+
+test('--json of a stub run: stubMode: true at the top level', async () => {
+  const res = JSON.parse(await go(repo(), ['--yes', '--json'], mock({ preflight: PREFLIGHT_STUB })));
+  assert.strictEqual(res.result, 'OK');
+  assert.strictEqual(res.stubMode, true);
+  assert.deepStrictEqual(res.stubPackages, [STUB_PKG]);
+  assert.deepStrictEqual(res.steps.filter((s) => COMMITS.indexOf(s.id) !== -1).map((s) => s.result), ['NOOP', 'NOOP', 'NOOP']);
+});
+
+test('--answer stub.mode=no → stops like a preflight blocker; --resume re-runs preflight', async () => {
+  const root = repo();
+  await go(root, [], mock({ preflight: PREFLIGHT_STUB }));
+  const m = mock({});
+  const out = await go(root, ['--resume', '--answer', 'stub.mode=no'], m);
+  assert.deepStrictEqual(m.calls, []);
+  assert.match(out, /preflight\s+⛔ BLOCKED   stub mode not approved/);
+  assert.match(out, /⛔ @ips\/mfe-shared-deps: package not found in https:\/\/registry\.npmjs\.org\//);
+  const s = state(root);
+  assert.strictEqual(s.current, 'preflight');
+  assert.strictEqual(s.answers['stub.mode'], undefined);
+  const res = JSON.parse(await go(repo(), ['--json', '--answer', 'stub.mode=no'], mock({ preflight: PREFLIGHT_STUB })));
+  assert.strictEqual(res.pause.kind, 'blocked');
+  assert.strictEqual(res.pause.step, 'preflight');
+});
+
+test('no stub candidates → no question, and every step gets an explicitly empty stub env', async () => {
+  const root = repo();
+  const m = mock({});
+  const out = await go(root, ['--yes'], m);
+  assert.doesNotMatch(out, /STUB/);
+  m.envs.forEach((e) => assert.deepStrictEqual(e.env, { MFE_MIGRATION_STUB: '' }, e.id));
+  COMMITS.forEach((id) => assert.ok(m.calls.some((c) => c.id === id)));
+  assert.strictEqual(state(root).stubMode, undefined);
+});
+
+test('preflight finds the package again → an earlier stub approval is dropped (never stub what the registry has)', async () => {
+  const root = repo();
+  await go(root, ['--yes', '--only', 'preflight'], mock({ preflight: PREFLIGHT_STUB }));
+  const s0 = state(root);
+  s0.stubMode = { approved: true, packages: [STUB_PKG] };
+  fs.writeFileSync(path.join(root, '.migration', 'state.json'), JSON.stringify(s0));
+  const m = mock({ scan: { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
+  await go(root, ['--from', 'preflight'], m);
+  assert.deepStrictEqual(stubEnvOf(m, 'scan'), { MFE_MIGRATION_STUB: '' });
+  assert.strictEqual(state(root).stubMode, undefined);
+});
+
+test('a non-internal package in stubCandidates is ignored – no stub mode', async () => {
+  const m = mock({ preflight: { stubCandidates: ['react'] } });
+  const out = await go(repo(), ['--yes'], m);
+  assert.doesNotMatch(out, /STUB/);
+  assert.ok(m.calls.some((c) => c.id === 'commit-mechanical'));
+});
+
+test('--dry-run with stub candidates: no pause, simulated with the warning, stub env passed, nothing written', async () => {
+  const root = repo();
+  const m = mock({ preflight: PREFLIGHT_STUB });
+  const out = await go(root, ['--dry-run'], m);
+  assert.match(out, /⚠ STUB MODE \[dry-run: simulated – a real run asks first]/);
+  assert.deepStrictEqual(stubEnvOf(m, 'scan'), { MFE_MIGRATION_STUB: STUB_PKG });
+  assert.ok(!m.calls.some((c) => COMMITS.indexOf(c.id) !== -1));
+  assert.ok(!fs.existsSync(path.join(root, '.migration')));
+});
+
+test('--from a later step keeps an approved stub decision', async () => {
+  const root = repo();
+  await go(root, ['--yes'], mock({ preflight: PREFLIGHT_STUB }));
+  const m = mock({ 'package-json': { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
+  await go(root, ['--from', 'package-json'], m);
+  assert.deepStrictEqual(stubEnvOf(m, 'package-json'), { MFE_MIGRATION_STUB: STUB_PKG });
 });

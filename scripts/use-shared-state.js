@@ -6,6 +6,7 @@
 // assets/useSharedState.meta.json. The asset is copied byte-for-byte – this script never edits the hook itself.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 const crypto = require('crypto');
 
 const SCRIPT = 'use-shared-state';
@@ -308,8 +309,8 @@ function main(argv, deps, io) {
   io = io || { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr(SCRIPT + ' crashed: ' + ((err && err.stack) || err) + '\n');

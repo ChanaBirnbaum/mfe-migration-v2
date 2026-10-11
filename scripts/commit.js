@@ -6,6 +6,7 @@
 
 const os = require('os');
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'commit';
 const STEPS_FILE = path.join(__dirname, '..', 'reference', 'commit-steps.json');
@@ -65,6 +66,19 @@ function makeGit(deps) {
   };
 }
 
+// "name: file:…/test-fixtures/…" for every dependency in package.json that points at a test stub
+function stubDependencies(fs, cwd) {
+  let pkg;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')); } catch (_) { return []; }
+  const found = [];
+  ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].forEach((block) => {
+    Object.keys((pkg && pkg[block]) || {}).forEach((name) => {
+      if (stubMode.isStubSpec(pkg[block][name])) found.push(name + ': ' + pkg[block][name]);
+    });
+  });
+  return found;
+}
+
 function run(argv, overrides) {
   const deps = Object.assign({
     execFileSync: require('child_process').execFileSync,
@@ -106,6 +120,23 @@ function run(argv, overrides) {
   const steps = Object.keys(config.steps);
   if (!opts.step || steps.indexOf(opts.step) === -1) {
     block('--step must be one of: ' + steps.join(' | ') + (opts.step ? ' (got "' + opts.step + '")' : ''), { check: 'step' });
+    return blocked();
+  }
+
+  // --- stub mode: never commit ------------------------------------------------
+  // package.json מכיל file: לנתיב מקומי. בראנץ' הסבה עם תלות כזו שבור אצל כל מי שימשוך אותו – אין דגל שעוקף את זה
+  if (stubMode.modeFor(deps).active) {
+    res.result = 'NOOP';
+    res.notes.push('Skipped – stub mode. package.json depends on a local test stub (file:…), and a migration branch with such a dependency ' +
+      'is broken for anyone who pulls it, so nothing is committed in a stub run. The changes stay uncommitted in the working tree. ' +
+      'Re-run the pipeline on the internal network to commit');
+    return res;
+  }
+  // גם בלי מצב stub (state נמחק, הרצה ידנית): package.json שמצביע ל-stub לעולם לא נכנס ל-commit
+  const stubbed = stubDependencies(deps.fs, deps.cwd);
+  if (stubbed.length) {
+    block('package.json points to a local test stub (' + stubbed.join(', ') + ') – refusing to commit. ' +
+      'Run package-json.js on the internal network (it replaces the stub with the real version), then commit', { check: 'stub-dependency' });
     return blocked();
   }
 
@@ -242,8 +273,8 @@ function main(argv, deps, io) {
   };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr('commit crashed: ' + ((err && err.stack) || err) + '\n');

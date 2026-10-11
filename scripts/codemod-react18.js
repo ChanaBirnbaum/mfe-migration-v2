@@ -7,6 +7,7 @@
 // Never introduces React-18-only hooks and never adds a mount/unmount API – services expose a component.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'codemod-react18';
 const SOURCE_EXTS = ['.js', '.jsx', '.ts', '.tsx'];
@@ -564,8 +565,8 @@ function main(argv, deps, io) {
   io = io || { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr(SCRIPT + ' crashed: ' + ((err && err.stack) || err) + '\n');

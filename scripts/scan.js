@@ -4,6 +4,7 @@
 // scan: full read-only inventory of a service repo. The only file it writes is the --out file.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'scan';
 const DEFAULT_OUT = '.migration/inventory.json';
@@ -1162,8 +1163,8 @@ function main(argv, deps, io) {
   };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr('scan crashed: ' + ((err && err.stack) || err) + '\n');

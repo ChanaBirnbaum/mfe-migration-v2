@@ -6,6 +6,7 @@
 // Never uses `npm start` – it contains --open and would open a browser on every run.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'verify-runtime';
 const DEFAULT_PORT = 8890;
@@ -304,8 +305,8 @@ async function main(argv, deps, io) {
   io = io || { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   try {
     const opts = parseArgs(argv || []);
-    const res = await run(argv, Object.assign({}, deps, { onOutput: opts.json ? () => {} : io.stdout }));
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(await run(argv, Object.assign({}, deps, { onOutput: opts.json ? () => {} : io.stdout })), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr(SCRIPT + ' crashed: ' + ((err && err.stack) || err) + '\n');

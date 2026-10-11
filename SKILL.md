@@ -11,7 +11,7 @@ description: הסבת שירות MFE מ-React 17 + Material-UI v4 ל-React 18 + 
 **הבראנץ':** המשתמשת עומדת על בראנץ' כלשהו (או מציינת אותו). שלב `branch` יוצר ממנו בראנץ' **חדש** בשם
 `digital_V2`, וכל ההסבה וה-commits נעשים עליו. `digital_V2` הוא **התוצר** של הסקיל, לא בראנץ' קיים שמסתעפים ממנו.
 אם HEAD כבר עומד על `digital_V2` – השלב נחשב כבוצע (NOOP, ותג `migration-start-*` חסר נוצר). אם `digital_V2`
-קיים (מקומית או ב-origin) אבל HEAD במקום אחר – השלב נחסם: השירות כנראה כבר הוסב.
+קיים (מקומית או ב-origin) אבל HEAD במקום אחר – הסקיל עובר אליו וממשיך עליו, אחרי אישור (ראה סוגי PAUSE).
 
 ## איך מריצים
 
@@ -37,7 +37,7 @@ node <skill-dir>/scripts/run.js
 
 | RESULT | מה קרה | מה לעשות |
 |---|---|---|
-| `OK` | הצינור הושלם | סכם למשתמשת לפי `MIGRATION-V2-REPORT.md` בשורש השירות: מה שונה, ובעיקר הסעיף "Needs manual handling". הדוח לא נכנס ל-commit – זו החלטה שלה |
+| `OK` | הצינור הושלם | סכם למשתמשת לפי `MIGRATION-V2-REPORT.md` בשורש השירות: מה שונה, ובעיקר הסעיף "Needs manual handling". הדוח לא נכנס ל-commit – זו החלטה שלה. **אם הופיעו שורות `⚠ STUB MODE` / `IN STUB MODE`**: פתח את הסיכום בכך שזו הרצת stub שאינה הסבה מאומתת – לא בוצעו commits, ה-shared לא נבדק מול החבילה האמיתית, ונדרשת הרצה חוזרת ברשת הפנימית. אל תכתוב "ההסבה הושלמה" |
 | `PAUSE` | עצירה בנקודת החלטה | ראה את הטבלה הבאה לפי סוג העצירה |
 | `PAUSE_FOR_FIX` | ה-build נכשל | תקן את השגיאות – ראה "סבב תיקון build" |
 | `FAILED` | סקריפט קרס (באג בסקריפט, לא בשירות) | הצג למשתמשת את שורות השגיאה שהודפסו. אל תנסה שוב בלי לברר |
@@ -52,7 +52,10 @@ node <skill-dir>/scripts/run.js
 
 | מופיע בפלט | `pause.kind` | מה לעשות |
 |---|---|---|
-| `Approval needed: create digital_V2 from <source>` | `approval` | **שאל את המשתמשת** אם להסתעף מהבראנץ' המוצג (ברירת מחדל: הבראנץ' הנוכחי, `pause.source`) ליצירת `digital_V2` (`pause.target`). אם הודפסו חוסמים (למשל `digital_V2` כבר קיים) – הצג אותם קודם. אחרי אישור: הפקודה מ-`Next:` (`--answer branch.source=<מקור>`). מקור אחר: `--answer branch.source=<שם>`. שם יעד אחר: הוסף `--answer branch.target=<שם>` |
+| `Approval needed: create digital_V2 from <source>` | `approval` | **שאל את המשתמשת** אם להסתעף מהבראנץ' המוצג (ברירת מחדל: הבראנץ' הנוכחי, `pause.source`) ליצירת `digital_V2` (`pause.target`). אם הודפסו חוסמים (למשל עץ עבודה לא נקי) – הצג אותם קודם. אחרי אישור: הפקודה מ-`Next:` (`--answer branch.source=<מקור>`). מקור אחר: `--answer branch.source=<שם>`. שם יעד אחר: הוסף `--answer branch.target=<שם>` |
+| `Approval needed: continue the existing migration on <target>` | `approval` (`pause.targetMode: resume`) | `digital_V2` כבר קיים עם תג `migration-start-*` – הסבה קודמת של הסקיל. **שאל את המשתמשת** אם להמשיך עליו. אחרי אישור: הפקודה מ-`Next:` |
+| `Approval needed: run the migration on the EXISTING branch <target>` | `approval` (`pause.targetMode: adopt`) | `digital_V2` קיים אבל **לא נוצר ע"י הסקיל** (למשל הסבה ידנית שנתקעה). **הצג למשתמשת את שורות ה-⚠ כלשונן** ושאל במפורש אם להריץ את ההסבה על גבי הבראנץ' הקיים. אחרי אישור: הפקודה מ-`Next:`. אחרת: שם יעד אחר עם `--answer branch.target=<שם>` |
+| `Approval needed: continue with a local stub for <package>` | `stub-mode` | חבילה פנימית (`pause.packages`) לא נמצאה ב-registry המוגדר (`pause.registry`) – כנראה אין גישה לרשת הפנימית. **הצג למשתמשת את שורות ה-⚠ כלשונן** ושאל במפורש אם להמשיך עם stub מקומי: הרצה כזו מאמתת רק את מנגנון הצינור, לא את קונפיגורציית ה-shared מול החבילה האמיתית, **ולא מבצעת אף commit**. אחרי אישור: `--resume --answer stub.mode=yes`. בלי אישור: להריץ ממקום עם גישה ל-registry הפנימי |
 | `⏸ REVIEW` של שלב | `review` | השלב **רץ וביצע שינויים**, ויש פריטים שדורשים עין אנושית. הצג את כל הפריטים כפי שהודפסו (קובץ:שורה – סיבה). המשך עם `--resume` רק אחרי שהמשתמשת אישרה |
 | `⛔ BLOCKED` של שלב | `blocked` | השלב **לא הושלם**. הצג את החסמים. אל תעקוף אותם – ראה "כללים". אחרי שהמשתמשת טיפלה: `--resume` מריץ את אותו שלב מחדש |
 | `No progress` / `Reached the maximum` | `build-stalled` | עצור ושאל את המשתמשת איך להמשיך. אל תמשיך בסבבים על דעת עצמך |
@@ -79,6 +82,9 @@ node <skill-dir>/scripts/run.js
 - **אל תוסיף לקוד** `useId`, `useSyncExternalStore`, `useTransition`, `useDeferredValue`, `useInsertionEffect` –
   תחת Host ישן השירות רץ על React 17. פירוט ב-[reference/coexistence.md](reference/coexistence.md).
 - **אל תערוך את `.migration/`** – זה ה-state של הצינור.
+- **מצב stub** ([specs/stub-mode.md](specs/stub-mode.md)): רק דרך ה-PAUSE של run.js, ורק כשהחבילה הפנימית באמת לא זמינה.
+  אל תגדיר `MFE_MIGRATION_STUB` בעצמך, אל תכתוב `file:` ל-`package.json` ידנית, ואל תבצע commit בהרצת stub –
+  `package.json` ו-`package-lock.json` מצביעים לנתיב מקומי, והבראנץ' יישבר אצל כל מי שימשוך אותו.
 - **ספק → שאל.** אם לא ברור אם תיקון משנה התנהגות, הצג אותו למשתמשת לפני שאתה מבצע.
 - הרצת שלב בודד: `--only <שלב>`. התחלה משלב: `--from <שלב>`. רשימת השלבים ב-[scripts/README.md](scripts/README.md).
 

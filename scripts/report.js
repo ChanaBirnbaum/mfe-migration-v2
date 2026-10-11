@@ -7,6 +7,7 @@
 // The report is written to the repo root and is never committed – that is the user's decision.
 
 const path = require('path');
+const stubMode = require('./stub-mode');
 
 const SCRIPT = 'report';
 const REPORT_FILE = 'MIGRATION-V2-REPORT.md';
@@ -102,7 +103,36 @@ function gitInfo(cp, root, env) {
 // ---------------------------------------------------------------------------
 // Model
 
-function buildModel(inputs, git, pkg, now) {
+// Stub run: the steps that ran against the local stub and what each one proved about the pipeline
+const STUB_PROVED = [
+  ['branch', 'Branch'],
+  ['codemods', 'Codemods'],
+  ['install', 'Install'],
+  ['build', 'Build'],
+  ['verify-runtime', 'Runtime check'],
+];
+const CODEMODS = ['codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'codemod-makestyles', 'use-shared-state', 'webpack-shared'];
+const RANK = { BLOCKED: 3, REVIEW: 2, OK: 1, NOOP: 0 };
+
+function stubModel(stub, latestPerScript, lastBuild) {
+  const packages = new Set(stub && stub.active ? stub.packages : []);
+  latestPerScript.forEach((r) => { if (r.stubMode) (r.stubPackages || []).forEach((p) => packages.add(p)); });
+  if (lastBuild && lastBuild.stubMode) (lastBuild.stubPackages || []).forEach((p) => packages.add(p));
+  if (!packages.size) return null;
+  const latest = new Map(latestPerScript.map((r) => [r.script, r.result]));
+  const resultOf = (id) => {
+    if (id === 'build') return lastBuild ? lastBuild.result : null;
+    if (id !== 'codemods') return latest.get(id) || null;
+    const rs = CODEMODS.map((s) => latest.get(s)).filter(Boolean);
+    return rs.length ? rs.reduce((a, b) => ((RANK[b] || 0) > (RANK[a] || 0) ? b : a)) : null;
+  };
+  return {
+    packages: Array.from(packages),
+    proved: STUB_PROVED.map(([id, label]) => ({ label: label, result: resultOf(id) })),
+  };
+}
+
+function buildModel(inputs, git, pkg, now, stub) {
   const byScript = new Map();
   inputs.results.forEach((r) => {
     if (!byScript.has(r.script)) byScript.set(r.script, []);
@@ -156,7 +186,8 @@ function buildModel(inputs, git, pkg, now) {
   const notes = [];
   const noteSeen = new Set();
   const addNote = (text, source) => { const k = text; if (!noteSeen.has(k)) { noteSeen.add(k); notes.push({ source: source, text: text }); } };
-  all.forEach((r) => (r.notes || []).forEach((n) => addNote(n, r.script)));
+  // the per-step stub warning is the first section of the report – not repeated as a note
+  all.forEach((r) => (r.notes || []).forEach((n) => { if (!/^STUB MODE: /.test(n)) addNote(n, r.script); }));
   const inv = inputs.inventory;
   if (inv) {
     (inv.react18Only || []).forEach((u) => addNote('Uses ' + u.api + ' (a React 18-only API) in ' + u.file + ':' + u.line + ' – not available under a Host with React 17', 'scan'));
@@ -167,7 +198,10 @@ function buildModel(inputs, git, pkg, now) {
   const msChanges = changes.filter((c) => c.stage === 'codemod-makestyles');
   const msFiles = Array.from(new Set(msChanges.map((c) => c.file.split(':')[0])));
   const msPending = inv && (inv.makeStyles || []).length && !msFiles.length;
-  const checklist = [{ text: 'Load the service under the old Host (React 17) and under the new Host (React 18)', reason: 'always' }];
+  const stubInfo = stubModel(stub, Array.from(byScript.values()).map((rs) => rs[rs.length - 1]), lastBuild);
+  const checklist = [];
+  if (stubInfo) checklist.push({ text: 'Re-run the whole pipeline on the internal network with the real ' + stubInfo.packages.join(', ') + ' (run.js --from preflight) – this run used a local stub and committed nothing', reason: 'stub' });
+  checklist.push({ text: 'Load the service under the old Host (React 17) and under the new Host (React 18)', reason: 'always' });
   if (msFiles.length || msPending) {
     checklist.push({ text: 'Visually check the screens that use components converted from makeStyles' + (msFiles.length ? ': ' + msFiles.join(', ') : ''), reason: 'makeStyles changes' });
   }
@@ -198,6 +232,7 @@ function buildModel(inputs, git, pkg, now) {
     manual: manual,
     notes: notes,
     checklist: checklist,
+    stub: stubInfo,
     missingInputs: EXPECTED_INPUTS.filter((s) => !present.has(s)),
     unreadableInputs: inputs.unreadable,
   };
@@ -218,6 +253,29 @@ function renderMarkdown(m) {
   L.push('');
   L.push('Date: ' + m.date + ' | Branch: `' + (m.branch || '?') + '` | Restore tag: ' + (m.tag ? '`' + m.tag + '`' : 'not found'));
   L.push('');
+  // סעיף ראשון ובולט: אסור שמישהו יקרא "הצינור הושלם" ויחשוב שהכל אומת
+  if (m.stub) {
+    const pk = m.stub.packages.map((p) => '`' + p + '`').join(', ');
+    L.push('## ⚠️ STUB RUN – this is NOT a validated migration');
+    L.push('');
+    L.push('> **This run used a local test stub (`test-fixtures/`) instead of ' + pk + '.** The stub only imitates the `buildSharedGen1` contract.');
+    L.push('');
+    L.push('**What this run proved** – the pipeline mechanics, end to end:');
+    L.push('');
+    m.stub.proved.forEach((p) => L.push('- ' + p.label + ': ' + (p.result || 'not run')));
+    L.push('- Report: generated (this file)');
+    L.push('');
+    L.push('**What it did NOT prove:**');
+    L.push('');
+    L.push('- The `shared` configuration against the real ' + pk + ' – `buildSharedGen1` came from the stub, so its output (versions, singleton / import settings) says nothing about the real package.');
+    L.push('');
+    L.push('**Nothing was committed.** The commit steps were skipped, and the working tree is left with uncommitted changes. ' +
+      '`package.json` and `package-lock.json` point to the local stub (`file:`) – **do not commit them**: the branch would be broken for anyone who pulls it.');
+    L.push('');
+    L.push('**Before any real use:** re-run the pipeline on the internal network (`run.js --from preflight`), with the real ' + pk + '.');
+    L.push('');
+  }
+
   L.push('## Summary');
   L.push('');
   const b = m.summary.build;
@@ -299,7 +357,7 @@ function run(argv, overrides) {
   let pkg = null;
   try { pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')); } catch (_) { pkg = null; }
   const git = gitInfo(deps.cp, root, deps.env);
-  const model = buildModel(inputs, git, pkg, deps.now);
+  const model = buildModel(inputs, git, pkg, deps.now, stubMode.modeFor(deps));
   res.report = model;
   if (!inputs.results.length && !inputs.inventory && !inputs.builds.length && !git.commits.length) {
     return blocked('No script outputs found in ' + MIGRATION_DIR + '/ and no migration-v2 commits');
@@ -339,8 +397,8 @@ function main(argv, deps, io) {
   io = io || { stdout: (s) => process.stdout.write(s), stderr: (s) => process.stderr.write(s) };
   try {
     const opts = parseArgs(argv || []);
-    const res = run(argv, deps);
-    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : formatText(res));
+    const res = stubMode.annotate(run(argv, deps), stubMode.modeFor(deps));
+    io.stdout(opts.json ? JSON.stringify(res, null, 2) + '\n' : stubMode.banner(res) + formatText(res));
     return 0;
   } catch (err) {
     io.stderr(SCRIPT + ' crashed: ' + ((err && err.stack) || err) + '\n');

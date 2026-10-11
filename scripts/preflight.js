@@ -13,7 +13,9 @@ const MIN_NODE_MAJOR = 18;
 const MAX_LISTED_FILES = 30;
 const TARGETS_FILE = path.join(__dirname, '..', 'reference', 'versions.json');
 
-const SYMBOLS = { ok: '✓', warn: '⚠', blocked: '⛔' };
+const stubMode = require('./stub-mode');
+
+const SYMBOLS = { ok: '✓', warn: '⚠', blocked: '⛔', 'stub-available': '⚠' };
 
 function parseArgs(argv) {
   return {
@@ -293,6 +295,9 @@ async function runPreflight(options, overrides) {
     }
   }
 
+  const internal = targets ? stubMode.internalPackages(targets) : [];
+  let stubs = [];
+
   // Registry checks: ping, then all target versions concurrently; results are reported in fixed order.
   const registryChain = (async () => {
     // 5. npm ping
@@ -320,27 +325,37 @@ async function runPreflight(options, overrides) {
         const ref = spec.version ? spec.name + '@' + spec.version : spec.name;
         const r = await npm(['view', ref, 'version'], deps.networkTimeoutMs);
         if (r.timedOut) return { ref: ref, spec: spec, ok: false, message: ref + ': did not respond within ' + netSec + ' seconds', timeout: true };
+        // חבילה פנימית שה-registry המוגדר אינו מכיר → מועמדת ל-stub, לא חוסם. רק "לא נמצא":
+        // timeout / שגיאה אחרת אינם הוכחה שהחבילה לא זמינה, ונשארים חוסמים
+        // התיקייה של ה-stub שייכת לסקיל, לא לריפו של השירות – נבדקת תמיד מול ה-fs האמיתי
+        const stubbable = internal.indexOf(spec.name) !== -1 && stubMode.hasStub(spec.name);
         if (!r.ok) {
           const text = r.stderr + '\n' + r.stdout;
           const notFound = /E404|404 Not Found|is not in this registry/i.test(text);
           return {
-            ref: ref, spec: spec, ok: false,
+            ref: ref, spec: spec, ok: false, stub: notFound && stubbable,
             message: ref + ': ' + (notFound ? 'package not found in the registry' : 'npm view failed – ' + (firstLine(r.stderr) || r.message)),
           };
         }
         const found = r.stdout.split(/\s+/).map((s) => s.replace(/^'|'$/g, '')).filter(Boolean);
         // npm view מחזיר פלט ריק וקוד 0 כשהגרסה המבוקשת לא קיימת
         if (found.length === 0 || (spec.version && found.indexOf(spec.version) === -1)) {
-          return { ref: ref, spec: spec, ok: false, message: ref + ': this version is not available in the registry' };
+          return { ref: ref, spec: spec, ok: false, stub: stubbable, message: ref + ': this version is not available in the registry' };
         }
         return { ref: ref, spec: spec, ok: true, found: found[found.length - 1] };
       }));
-      const failed = results.filter((x) => !x.ok);
+      const failed = results.filter((x) => !x.ok && !x.stub);
+      stubs = results.filter((x) => !x.ok && x.stub);
       const lines = results.map((x) => (x.ok
         ? SYMBOLS.ok + ' ' + (x.spec.version ? x.ref : x.ref + ' (' + x.found + ')')
-        : SYMBOLS.blocked + ' ' + x.message));
-      if (failed.length === 0) {
+        : x.stub
+          ? SYMBOLS['stub-available'] + ' ' + x.message + ' – internal package, a local stub is available (stub-available)'
+          : SYMBOLS.blocked + ' ' + x.message));
+      if (failed.length === 0 && stubs.length === 0) {
         versionsCheck = check('target-versions', 'Target versions', 'ok', results.length + ' packages available', { lines: lines });
+      } else if (failed.length === 0) {
+        versionsCheck = check('target-versions', 'Target versions', 'stub-available',
+          stubs.length + ' internal package(s) not in ' + registryLabel + ' – a local stub can be used (run.js asks)', { lines: lines });
       } else {
         versionsCheck = check('target-versions', 'Target versions', 'blocked', failed.length + ' of ' + results.length + ' packages are not available', { lines: lines });
         versionBlockers = failed.map((x) => ({
@@ -361,6 +376,14 @@ async function runPreflight(options, overrides) {
   checks.push(reg.versionsCheck);
   reg.versionBlockers.forEach((b) => addBlocker('target-versions', b.message, b));
 
+  // preflight רק מדווח שאפשר stub. ההחלטה (עם אישור אדם) היא של run.js
+  const stubCandidates = stubs.map((x) => x.spec.name);
+  if (stubCandidates.length) {
+    notes.push('stub-available: ' + stubCandidates.join(', ') + ' – internal, not found in ' + registryLabel +
+      '. Not a blocker: a local test stub (test-fixtures/) can stand in for it so the pipeline can run off the internal network. ' +
+      'run.js asks before using it; such a run validates the pipeline mechanics only and never commits');
+  }
+
   return {
     script: SCRIPT,
     result: blockers.length === 0 ? 'OK' : 'BLOCKED',
@@ -370,6 +393,7 @@ async function runPreflight(options, overrides) {
     notes: notes,
     checks: checks,
     environment: environment,
+    stubCandidates: stubCandidates,
   };
 }
 
@@ -397,8 +421,8 @@ async function main(argv, deps, io) {
   };
   try {
     const options = parseArgs(argv || []);
-    const result = await runPreflight(options, deps);
-    io.stdout(options.json ? JSON.stringify(result, null, 2) + '\n' : formatText(result));
+    const result = stubMode.annotate(await runPreflight(options, deps), stubMode.modeFor(deps));
+    io.stdout(options.json ? JSON.stringify(result, null, 2) + '\n' : stubMode.banner(result) + formatText(result));
     return 0;
   } catch (err) {
     // קריסה אמיתית בלבד – רק כאן נכתב ל-stderr ויוצאים עם 1

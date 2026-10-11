@@ -235,3 +235,43 @@ test('crash → exit 1, stderr only', () => {
   assert.strictEqual(out, '');
   assert.match(err, /commit crashed/);
 });
+
+// ---- stub mode: never commit ----
+
+const STUB_SPEC = 'file:' + path.join(__dirname, '..', 'test-fixtures', 'ips-mfe-shared-deps').split(path.sep).join('/');
+
+test('stub mode (env from run.js) → NOOP with the reason, no git call, nothing committed', () => {
+  const r = makeRepo();
+  write(r.work, 'package.json', JSON.stringify({ name: 'svc', dependencies: { '@ips/mfe-shared-deps': STUB_SPEC } }) + '\n');
+  const calls = [];
+  const before = commitCount(r.work);
+  const d = Object.assign(deps(r.work, calls), { env: Object.assign({}, GIT_ENV, { MFE_MIGRATION_STUB: '@ips/mfe-shared-deps' }) });
+  const res = run(['--step', 'mechanical'], d);
+  assert.strictEqual(res.result, 'NOOP');
+  assert.match(res.notes.join(' '), /Skipped – stub mode/);
+  assert.match(res.notes.join(' '), /broken for anyone who pulls it/);
+  assert.deepStrictEqual(calls, []);
+  assert.strictEqual(commitCount(r.work), before);
+  assert.notStrictEqual(g(r.work, ['status', '--porcelain']), '');
+});
+
+test('stub mode from .migration/state.json (step run by hand) → NOOP, and --json carries stubMode', () => {
+  const r = makeRepo();
+  write(r.work, '.migration/state.json', JSON.stringify({ stubMode: { approved: true, packages: ['@ips/mfe-shared-deps'] } }));
+  write(r.work, 'src/App.jsx', 'export default 9;\n');
+  let out = '';
+  main(['--step', 'infra', '--json'], deps(r.work), { stdout: (s) => { out += s; }, stderr: () => {} });
+  const res = JSON.parse(out);
+  assert.strictEqual(res.result, 'NOOP');
+  assert.strictEqual(res.stubMode, true);
+  assert.strictEqual(commitCount(r.work), 1);
+});
+
+test('not in stub mode but package.json points to the stub → BLOCKED, never committed', () => {
+  const r = makeRepo();
+  write(r.work, 'package.json', JSON.stringify({ name: 'svc', dependencies: { '@ips/mfe-shared-deps': STUB_SPEC } }) + '\n');
+  const res = run(['--step', 'mechanical'], Object.assign(deps(r.work), { env: Object.assign({}, GIT_ENV, { MFE_MIGRATION_STUB: '' }) }));
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.deepStrictEqual(res.blockers.map((b) => b.check), ['stub-dependency']);
+  assert.strictEqual(commitCount(r.work), 1);
+});

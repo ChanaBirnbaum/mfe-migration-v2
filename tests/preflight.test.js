@@ -239,16 +239,81 @@ test('missing exact version (npm view prints nothing) → one blocker for that p
   assert.strictEqual(res.blockers[0].version, '7.3.11');
 });
 
-test('package not in registry (E404) → blocker per package', async () => {
+test('package not in registry (E404) → blocker per public package; the internal one is a stub candidate', async () => {
   const s = setup({
     responses: {
       'npm view @ips/mfe-shared-deps version': fail(1, 'npm ERR! code E404\nnpm ERR! 404 Not Found'),
       'npm view @emotion/styled@11.11.0 version': fail(1, 'npm ERR! code E404'),
+      'npm view @mui/material@7.3.11 version': fail(1, 'npm ERR! code E404'),
     },
   });
   const res = await runPreflight({}, s.deps);
-  assert.deepStrictEqual(res.blockers.map((b) => b.package).sort(), ['@emotion/styled', '@ips/mfe-shared-deps']);
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.deepStrictEqual(res.blockers.map((b) => b.package).sort(), ['@emotion/styled', '@mui/material']);
   res.blockers.forEach((b) => assert.match(b.message, /not found/));
+  assert.deepStrictEqual(res.stubCandidates, ['@ips/mfe-shared-deps']);
+  assert.strictEqual(checkById(res, 'target-versions').status, 'blocked');
+});
+
+// ---- internal packages → stub-available (preflight only reports; run.js decides) ----
+
+test('internal package not in the registry → not a blocker: stub-available, stubCandidates, OK', async () => {
+  const s = setup({ responses: { 'npm view @ips/mfe-shared-deps version': fail(1, 'npm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/@ips%2fmfe-shared-deps') } });
+  const res = await runPreflight({}, s.deps);
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.deepStrictEqual(res.blockers, []);
+  assert.deepStrictEqual(res.stubCandidates, ['@ips/mfe-shared-deps']);
+  const c = checkById(res, 'target-versions');
+  assert.strictEqual(c.status, 'stub-available');
+  assert.match(c.message, /internal package\(s\) not in https:\/\/nexus\.internal\/repository\/npm\//);
+  assert.ok(c.lines.some((l) => /^⚠ @ips\/mfe-shared-deps: package not found .*stub-available/.test(l)));
+  assert.match(res.notes.join(' '), /stub-available: @ips\/mfe-shared-deps – internal, not found in/);
+  assert.match(res.notes.join(' '), /validates the pipeline mechanics only and never commits/);
+  assert.match(formatText(res), /⚠ Target versions: 1 internal package/);
+});
+
+test('internal package available → no stub candidates, even though a stub exists', async () => {
+  const res = await runPreflight({}, setup().deps);
+  assert.deepStrictEqual(res.stubCandidates, []);
+  assert.strictEqual(checkById(res, 'target-versions').status, 'ok');
+});
+
+test('internal package: timeout / other npm error is NOT a stub candidate – still a blocker', async () => {
+  const t = await runPreflight({}, setup({ responses: { 'npm view @ips/mfe-shared-deps version': HANG } }).deps);
+  assert.deepStrictEqual(t.stubCandidates, []);
+  assert.deepStrictEqual(t.blockers.map((b) => b.package), ['@ips/mfe-shared-deps']);
+  const e = await runPreflight({}, setup({ responses: { 'npm view @ips/mfe-shared-deps version': fail(1, 'npm ERR! code E401 Unauthorized') } }).deps);
+  assert.deepStrictEqual(e.stubCandidates, []);
+  assert.strictEqual(e.result, 'BLOCKED');
+});
+
+test('a public package that is not in versions.json "internal" is never a stub candidate', async () => {
+  const targets = Object.assign({}, loadTargets(), { internal: [] });
+  const s = setup({ responses: { 'npm view @ips/mfe-shared-deps version': fail(1, 'npm ERR! code E404') } });
+  const res = await runPreflight({}, Object.assign(s.deps, { targets: targets }));
+  assert.deepStrictEqual(res.stubCandidates, []);
+  assert.deepStrictEqual(blockerIds(res), ['target-versions']);
+});
+
+test('internal listed but without a stub folder → blocker', async () => {
+  const base = loadTargets();
+  const targets = Object.assign({}, base, {
+    requiredDependencies: Object.assign({}, base.requiredDependencies, { '@ips/no-stub-here': null }),
+    internal: ['@ips/mfe-shared-deps', '@ips/no-stub-here'],
+  });
+  const s = setup({
+    responses: {
+      'npm view @ips/mfe-shared-deps version': fail(1, 'npm ERR! code E404'),
+      'npm view @ips/no-stub-here version': fail(1, 'npm ERR! code E404'),
+    },
+  });
+  const res = await runPreflight({}, Object.assign(s.deps, { targets: targets }));
+  assert.deepStrictEqual(res.stubCandidates, ['@ips/mfe-shared-deps']);
+  assert.deepStrictEqual(res.blockers.map((b) => b.package), ['@ips/no-stub-here']);
+});
+
+test('versions.json lists @ips/mfe-shared-deps as internal', () => {
+  assert.deepStrictEqual(loadTargets().internal, ['@ips/mfe-shared-deps']);
 });
 
 test('npm view timeout → blocker flagged as timeout', async () => {

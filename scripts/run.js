@@ -132,7 +132,9 @@ async function run(argv, overrides) {
   const rel = path.relative(path.resolve(SKILL_ROOT), path.resolve(root));
   if (!rel || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
     say('⏸ run.js was run from inside the skill folder (' + root + '). Run it from the root of the service repo being migrated:');
-    say('   cd <service root> && ' + RUN_CMD);
+    // two separate commands, no && / ; – the line must work as-is in PowerShell 5.1, cmd and bash
+    say('   cd <service root>');
+    say('   ' + RUN_CMD);
     return stop('PAUSE', { kind: 'skill-dir', message: 'cwd is inside the skill folder – nothing was written' });
   }
 

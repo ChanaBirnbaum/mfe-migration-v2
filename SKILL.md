@@ -24,6 +24,11 @@ cd <שורש השירות>
 node <skill-dir>/scripts/run.js
 ```
 
+- **איזה shell:** ב-Windows הרץ דרך כלי **PowerShell** (לא Bash). אצל חלק מהמפתחים Git Bash נכשל כבר בעלייה
+  (`Permission denied` על `/etc/mtab`, `/etc/hosts` – סקריפט ההתקנה של Git שלא יכול לכתוב ל-`Program Files\Git\etc`),
+  ואין לזה קשר לסקיל. אם כלי PowerShell לא זמין – Bash. ב-macOS / Linux – Bash.
+- **פקודות בלי שרשור:** הרץ `cd` ו-`node` כשתי קריאות נפרדות, או `node` לבד אם ה-cwd כבר שורש השירות. אל תשתמש
+  ב-`&&` – הוא שגיאת תחביר ב-Windows PowerShell 5.1. שורת `Next:` היא פקודת `node` אחת שעובדת בכל shell.
 - **אל תריץ מתוך `<skill-dir>`** – run.js יעצור עם `PAUSE` (`skill-dir`) ולא יכתוב דבר.
 - `node scripts/run.js` מתוך השירות **לא יעבוד** – אין לשירות תיקיית scripts של הסקיל.
 - הפקודה להמשך מודפסת תמיד בשורה `Next:` עם הנתיב המלא. העתק אותה כמו שהיא.

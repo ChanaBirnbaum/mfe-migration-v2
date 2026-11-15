@@ -300,6 +300,18 @@ test('cwd inside the skill folder → PAUSE (skill-dir), nothing runs, no state 
   }
 });
 
+test('printed commands use no shell-specific chaining (must work in PowerShell 5.1, cmd and bash)', async () => {
+  const outputs = [];
+  for (const cwd of [SKILL_ROOT, repo()]) {
+    let out = '';
+    await main([], { cwd: cwd, runStep: mock(BRANCH_PROBE).runStep }, { stdout: (s) => { out += s; }, stderr: () => {} });
+    outputs.push(out);
+  }
+  const cmds = outputs.join('\n').split('\n').filter((l) => /\bnode\b|\bcd\b/.test(l));
+  assert.ok(cmds.length > 0, 'no command lines were printed');
+  for (const l of cmds) assert.ok(!/&&|\|\||;\s*node\b/.test(l), 'shell-specific command: ' + l);
+});
+
 test('printed next command points at the real run.js, so it works from the service root', async () => {
   const root = repo();
   let out = '';

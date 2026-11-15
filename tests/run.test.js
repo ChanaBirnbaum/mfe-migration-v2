@@ -499,12 +499,25 @@ test('--resume --answer stub.mode=yes → saved in state.stubMode, every step ge
   assert.deepStrictEqual(stubEnvOf(m2, 'package-json'), { MFE_MIGRATION_STUB: STUB_PKG });
 });
 
-test('--yes with stub candidates: approved automatically, warnings kept, commit steps never run, stub summary at the end', async () => {
+test('--yes / --auto never approve stub mode: still PAUSE stub-mode, the explicit answer is required', async () => {
+  for (const flag of ['--yes', '--auto']) {
+    const root = repo();
+    const m = mock({ preflight: PREFLIGHT_STUB });
+    const out = await go(root, [flag], m);
+    assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight'], flag);
+    assert.match(out, /Approval needed: continue with a local stub for @ips\/mfe-shared-deps/);
+    assert.doesNotMatch(out, /STUB MODE approved/);
+    assert.strictEqual(last(out), 'RESULT: PAUSE');
+    assert.strictEqual(state(root).stubMode, undefined);
+  }
+});
+
+test('--yes --answer stub.mode=yes with stub candidates: approved, warnings kept, commit steps never run, stub summary at the end', async () => {
   const root = repo();
   const m = mock({ preflight: PREFLIGHT_STUB });
   let out = '';
-  await main(['--yes'], { cwd: root, runStep: m.runStep }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error(s); } });
-  assert.match(out, /⚠ STUB MODE approved automatically \(--yes\)/);
+  await main(['--yes', '--answer', 'stub.mode=yes'], { cwd: root, runStep: m.runStep }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error(s); } });
+  assert.match(out, /⚠ STUB MODE approved/);
   assert.match(out, /validates the pipeline mechanics only/);
   // the three commit steps are skipped entirely – commit.js is never spawned
   assert.deepStrictEqual(m.calls.map((c) => c.id), ALL.filter((id) => COMMITS.indexOf(id) === -1));
@@ -523,11 +536,11 @@ test('--yes with stub candidates: approved automatically, warnings kept, commit 
   assert.match(out, /Nothing was committed: the working tree is left with uncommitted changes/);
   assert.match(out, /Re-run on the internal network before any real use/);
   assert.match(out, /⚠ STUB MODE \(@ips\/mfe-shared-deps\) – pipeline mechanics only, NOT a validated migration; nothing committed.*\nRESULT: OK\n$/);
-  assert.strictEqual(state(root).stubMode.approvedBy, '--yes');
+  assert.strictEqual(state(root).stubMode.approvedBy, 'answer');
 });
 
 test('--json of a stub run: stubMode: true at the top level', async () => {
-  const res = JSON.parse(await go(repo(), ['--yes', '--json'], mock({ preflight: PREFLIGHT_STUB })));
+  const res = JSON.parse(await go(repo(), ['--yes', '--answer', 'stub.mode=yes', '--json'], mock({ preflight: PREFLIGHT_STUB })));
   assert.strictEqual(res.result, 'OK');
   assert.strictEqual(res.stubMode, true);
   assert.deepStrictEqual(res.stubPackages, [STUB_PKG]);
@@ -591,8 +604,74 @@ test('--dry-run with stub candidates: no pause, simulated with the warning, stub
 
 test('--from a later step keeps an approved stub decision', async () => {
   const root = repo();
-  await go(root, ['--yes'], mock({ preflight: PREFLIGHT_STUB }));
+  await go(root, ['--yes', '--answer', 'stub.mode=yes'], mock({ preflight: PREFLIGHT_STUB }));
   const m = mock({ 'package-json': { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
   await go(root, ['--from', 'package-json'], m);
   assert.deepStrictEqual(stubEnvOf(m, 'package-json'), { MFE_MIGRATION_STUB: STUB_PKG });
+});
+
+// ---- --auto: a developer running the pipeline alone (RUNBOOK.md) ----
+
+test('--auto: no branch approval (current branch → digital_V2), REVIEW does not stop, summary at the end', async () => {
+  const root = repo();
+  const m = mock(Object.assign({}, BRANCH_PROBE, {
+    'codemod-makestyles': { result: 'REVIEW', manual: [{ file: 'src/D.jsx', line: 4, reason: 'level C' }] },
+    'use-shared-state': { result: 'REVIEW', manual: [{ file: 'src/S.js', line: 1, reason: 'call-site' }] },
+  }));
+  const out = await go(root, ['--auto'], m);
+  // probe + real run of branch, then every remaining step
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan', 'branch'].concat(ALL.slice(2)));
+  assert.deepStrictEqual(m.calls[3].args, ['--json']); // branch.js defaults: the current branch
+  assert.match(out, /\[auto] creating digital_V2 from develop \(current branch\)/);
+  assert.doesNotMatch(out, /Approval needed/);
+  assert.match(out, /codemod-makestyles\s+⏸ REVIEW/);
+  assert.match(out, /1\. src\/D\.jsx:4 – level C/);
+  assert.match(out, /\[auto] continuing – these items are also listed under "Needs manual handling"/);
+  assert.match(out, /✅ The pipeline is complete/);
+  assert.match(out, /⏸ 2 step\(s\) had items to review \(codemod-makestyles, use-shared-state\)/);
+  assert.strictEqual(last(out), 'RESULT: OK');
+  assert.strictEqual(state(root).current, null);
+});
+
+test('--auto: resume of the skill\'s own migration is not asked; adopt (branch not created by the skill) still stops', async () => {
+  const resume = await go(repo(), ['--auto'], mock({
+    branch: (args) => (args.indexOf('--dry-run') !== -1 ? { targetMode: 'resume', previousBranch: 'main', targetBranch: 'digital_V2', tag: 'migration-start-1' } : {}),
+    'package-json': { result: 'BLOCKED', blockers: [{ message: 'x' }] },
+  }));
+  assert.match(resume, /\[auto] continuing the existing migration on digital_V2 \(start tag migration-start-1\)/);
+  assert.doesNotMatch(resume, /Approval needed/);
+
+  const m = mock({ branch: { targetMode: 'adopt', previousBranch: 'develop', targetBranch: 'digital_V2', tag: 'migration-start-2' } });
+  const out = await go(repo(), ['--auto'], m);
+  assert.match(out, /Approval needed: run the migration on the EXISTING branch digital_V2/);
+  assert.ok(out.indexOf('Next: ' + RUN_CMD + ' --auto --answer branch.source=develop') !== -1, out);
+  assert.strictEqual(last(out), 'RESULT: PAUSE');
+});
+
+test('--auto: the same command again continues where it stopped (no "unfinished" pause, no --resume needed)', async () => {
+  const root = repo();
+  const out1 = await go(root, ['--auto'], mock(Object.assign({}, BRANCH_PROBE, { install: { result: 'BLOCKED', blockers: [{ message: 'ERESOLVE' }] } })));
+  assert.ok(out1.indexOf('continue with (the step runs again): ' + RUN_CMD + ' --auto\n') !== -1, out1);
+  const m2 = mock({ build: failing(3) });
+  const out2 = await go(root, ['--auto'], m2);
+  assert.doesNotMatch(out2, /A previous run did not finish/);
+  assert.strictEqual(m2.calls[0].id, 'install');
+  assert.match(out2, /build\s+🔧 PAUSE_FOR_FIX 3 errors/);
+  const m3 = mock({});
+  const out3 = await go(root, ['--auto'], m3);
+  assert.deepStrictEqual(m3.calls.map((c) => c.id), ['build', 'verify-runtime', 'commit-build-fixes', 'report']);
+  assert.strictEqual(last(out3), 'RESULT: OK');
+  // finished: running it again does nothing
+  const m4 = mock({});
+  const out4 = await go(root, ['--auto'], m4);
+  assert.deepStrictEqual(m4.calls, []);
+  assert.match(out4, /already complete/);
+});
+
+test('--auto --from preflight starts over explicitly', async () => {
+  const root = repo();
+  await go(root, ['--auto'], mock(Object.assign({}, BRANCH_PROBE, { install: { result: 'BLOCKED', blockers: [{ message: 'x' }] } })));
+  const m = mock({ scan: { result: 'BLOCKED', blockers: [{ message: 'x' }] } });
+  await go(root, ['--auto', '--from', 'preflight'], m);
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan']);
 });

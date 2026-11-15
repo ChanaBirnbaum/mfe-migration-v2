@@ -42,14 +42,20 @@
 
 ```bash
 cd <שורש השירות>
-node <skill-dir>/scripts/run.js [--resume] [--answer <key>=<value>]... [--from <שלב>] [--only <שלב>] [--dry-run] [--yes] [--json]
+node <skill-dir>/scripts/run.js [--resume] [--answer <key>=<value>]... [--from <שלב>] [--only <שלב>] [--dry-run] [--yes] [--auto] [--json]
 ```
 
 - `--resume` – ממשיך מהשלב שנשמר ב-`.migration/state.json`
 - `--answer branch.source=<שם>` – אישור בראנץ' המקור שממנו מסתעפים (נקודת האישור). `--answer branch.target=<שם>` – שם אחר לבראנץ' היעד במקום `digital_V2` (אופציונלי; אפשר לחזור על הדגל)
 - `--from` / `--only` – לפי שמות השלבים בעמודה "שלב ב-run.js"
 - `--answer stub.mode=yes` – אישור מצב stub אחרי PAUSE מסוג `stub-mode` (חבילה פנימית לא נמצאה ב-registry). ההחלטה נשמרת ב-`state.stubMode`. כל ערך אחר → נעצר כמו preflight חסום
-- `--yes` – דילוג על נקודות אישור (הרצת אצווה). מאשר גם מצב stub, אבל האזהרות מודפסות בכל זאת
+- `--yes` – דילוג על נקודות אישור (הרצת אצווה). **לא** מאשר מצב stub – זה רק `--answer stub.mode=yes`
+- `--auto` – הרצה עצמאית של מפתח מהטרמינל, בלי Claude ([RUNBOOK.md](../RUNBOOK.md)):
+  - יצירת `digital_V2` מהבראנץ' הנוכחי, או המשך הסבה קיימת של הסקיל – בלי עצירה לאישור
+  - `REVIEW` לא עוצר: הפריטים מודפסים, נאספים ל-"Needs manual handling" בדוח, ובסוף מודפס סיכום של השלבים שהיו בהם פריטים
+  - אם יש `state.json`, אותה פקודה ממשיכה מהשלב השמור (כמו `--resume`). התחלה מחדש: `--auto --from preflight`
+  - שורת ההמשך המודפסת היא אותה פקודה בדיוק (`run.js --auto`)
+  - עדיין עוצר על: `BLOCKED`, שגיאות build, קריסה, `digital_V2` קיים שלא נוצר ע"י הסקיל (adopt), ומצב stub
 
 מצב stub: run.js מגדיר `MFE_MIGRATION_STUB` לכל שלב (רשימת החבילות, או ריק = כבוי), לא מריץ את שלבי ה-commit,
 מדפיס `⚠ STUB MODE` מתחת לכל שלב, ומסיים בשורות `⚠` במקום `✅ The pipeline is complete`. אפיון: [specs/stub-mode.md](../specs/stub-mode.md).

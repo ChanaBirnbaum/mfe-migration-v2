@@ -38,7 +38,7 @@ role לא חוקי, `pkg` / `require` חסרים, חבילה רק ב-devDependen
 |---|---|
 | אין החלטה | `PAUSE`, ‏`pause.kind: 'stub-mode'`, ‏`pause.key: 'stub.mode'`. ההודעה: אילו חבילות פנימיות לא נמצאו ובאיזה registry; שאפשר להמשיך עם stub מקומי; שהרצה כזו מאמתת את מנגנון הצינור בלבד ולא את קונפיגורציית ה-shared מול החבילה האמיתית; שלא יבוצעו commits |
 | `--resume --answer stub.mode=yes` | מאושר, נשמר ב-`state.stubMode = { approved: true, packages, registry, approvedAt, approvedBy }`. `--resume` הבא לא שואל שוב |
-| `--yes` | מאושר אוטומטית — **ההסבר והאזהרות מודפסים בכל זאת** |
+| `--yes` / `--auto` | **לא מאשרים** – ‏`PAUSE` כמו "אין החלטה". מצב stub מאושר רק ב-`--answer stub.mode=yes` המפורש (הרצה בלי commits לא תקרה בטעות מדגל אצווה) |
 | `--answer stub.mode=<כל ערך אחר>` | נעצר כמו היום: PAUSE מסוג `blocked` על preflight, עם החבילה שלא נמצאה. `--resume` מריץ את preflight מחדש |
 | `--dry-run` | אין עצירה. המצב מדומה (עם שורת אזהרה) כדי ששאר השלבים יראו את מה שיקרה |
 | preflight רץ שוב ומוצא את החבילה | `state.stubMode` נמחק — **לעולם לא stub לחבילה זמינה** |
@@ -85,4 +85,4 @@ run.js מגדיר `MFE_MIGRATION_STUB` **לכל** שלב: רשימת החביל�
 - package-json: ‏`file:` מוחלט, רק לחבילות ה-stub; חבילה זמינה → BLOCKED; החלפת stub ישן בגרסה אמיתית
 - commit: NOOP במצב stub (env או state), BLOCKED על `package.json` עם stub מחוץ למצב stub
 - install: הרצה אמיתית של npm עם `file:` ל-stub ו-registry לא נגיש → ההתקנה מצליחה ו-`buildSharedGen1` נטען
-- report: הסעיף הראשון; run.js: ‏PAUSE, אישור, `--yes`, סירוב, dry-run, ביטול כשהחבילה חוזרת, דילוג על commits, האזהרות
+- report: הסעיף הראשון; run.js: ‏PAUSE, אישור, `--yes` / `--auto` לא מאשרים, סירוב, dry-run, ביטול כשהחבילה חוזרת, דילוג על commits, האזהרות

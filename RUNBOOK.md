@@ -3,6 +3,14 @@
 הסקריפט מבצע את ההסבה: React 18, MUI v7 ו-`buildSharedGen1`. הוא עובד על בראנץ' חדש `digital_V2` ועושה commits לבד.
 את ה-push עושים בעצמכם, בסוף.
 
+**כל ההרצה היא פקודה אחת, תמיד אותה פקודה:**
+
+```powershell
+node C:\tools\mfe-migration-v2\scripts\run.js --auto
+```
+
+הסקריפט עוצר רק כשצריך לתקן משהו. אחרי התיקון מריצים שוב את אותה פקודה, והוא ממשיך מאיפה שעצר.
+
 זמן משוער: 15–30 דקות להרצה, ועוד זמן לתיקוני build אם יהיו.
 
 ---
@@ -12,16 +20,23 @@
 > **חשוב:** את הסקריפט שמים **מחוץ** לריפו של השירות. לא ב-`.claude/skills` של השירות.
 > אחרת git של השירות רואה אותו כקבצים חדשים, וההרצה נעצרת על "git לא נקי".
 
-1. מעתיקים את התיקייה `mfe-migration-v2` ל-**`C:\tools\mfe-migration-v2`**.
-   כל הפקודות בקובץ הזה מניחות את הנתיב הזה.
-2. בטרמינל (PowerShell):
+מעתיקים את התיקייה `mfe-migration-v2`, **כולל `node_modules`**, ל-**`C:\tools\mfe-migration-v2`**.
+כל הפקודות בקובץ הזה מניחות את הנתיב הזה.
 
-   ```powershell
-   cd C:\tools\mfe-migration-v2
-   npm ci
-   ```
+```powershell
+robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR
+```
 
-דרישות: Node 18 ומעלה, git, וגישה ל-registry הפנימי.
+- **לא מריצים `npm ci` בתיקיית הסקיל.** `ts-morph` עדיין לא קיים ב-feed הפנימי, ולכן `npm ci` נכשל עם 404.
+  התיקייה מגיעה כשהחבילות כבר מותקנות.
+- לא מריצים את הסקריפט ישירות מנתיב רשת (`\\server\...`), אלא רק מהעותק המקומי.
+  מנתיב רשת `ts-morph` לא נטען, ומופיעה הודעה מטעה שמבקשת להריץ npm install.
+- כשמתפרסמת גרסה חדשה של הסקיל, מריצים שוב את אותה פקודת `robocopy`.
+
+דרישות: Node 18 ומעלה, git, וגישה ל-registry הפנימי (בשביל ה-`npm install` של **השירות**).
+
+> `npm ping` מול ה-feed ב-TFS נכשל תמיד, כי ה-feed לא תומך בפקודה הזו. זה לא חוסם את ההרצה:
+> preflight מציג אזהרה ובודק את הגישה דרך `npm view`.
 
 ---
 
@@ -35,7 +50,7 @@ git pull
 ```
 
 - [ ] `git status` נקי. אם לא: עושים commit או `git stash`.
-- [ ] עומדים על הבראנץ' שממנו רוצים להסב. ממנו ייווצר `digital_V2`.
+- [ ] עומדים על הבראנץ' שממנו רוצים להסב. **`digital_V2` ייווצר ממנו בלי לשאול.**
 - [ ] **מומלץ:** מריצים `npm run build:dev` ומוודאים שהוא עובר **לפני** ההסבה.
       כך יודעים אילו שגיאות היו קיימות קודם ואילו נגרמו מההסבה.
 
@@ -43,28 +58,23 @@ git pull
 
 ## 2. הרצה
 
-תמיד מתוך **שורש השירות**:
+מתוך **שורש השירות**:
 
 ```powershell
-node C:\tools\mfe-migration-v2\scripts\run.js
+node C:\tools\mfe-migration-v2\scripts\run.js --auto
 ```
 
-השורה האחרונה בפלט היא תמיד `RESULT: ...`. אם הסקריפט עצר, מופיעה מעליה שורה `Next:` עם הפקודה להמשך.
-**מעתיקים את הפקודה מ-`Next:` כמו שהיא.**
+השורה האחרונה בפלט היא תמיד `RESULT: ...`.
 
 | מה רואים | מה עושים |
 |---|---|
-| `Approval needed: create digital_V2 from <branch>` | מוודאים שזה הבראנץ' הנכון ומריצים את `Next:` |
-| `Approval needed: continue the existing migration` | `digital_V2` כבר קיים מהרצה קודמת. מריצים את `Next:` כדי להמשיך |
-| `Approval needed: run the migration on the EXISTING branch` | `digital_V2` קיים אבל לא נוצר ע"י הסקריפט. **עוצרים ומתייעצים** |
-| `⏸ REVIEW` | השלב כבר ביצע שינויים, ויש מקומות שצריך לבדוק בעין (קובץ:שורה – סיבה). בודקים, מתקנים אם צריך, ומריצים את `Next:` |
-| `⛔ BLOCKED` | מטפלים בסיבה שהודפסה ומריצים את `Next:` (`--resume`) |
-| `🔧 PAUSE_FOR_FIX` | ה-build נכשל. ראו סעיף 3 |
-| `continue with a local stub` | **לא מאשרים.** חבילה פנימית לא נמצאה, כנראה אין גישה ל-registry הפנימי. בודקים את הגדרות npm ומריצים שוב |
-| `💥 FAILED` | באג בסקריפט. שומרים את הפלט ומעבירים לצוות הסקיל |
 | `RESULT: OK` | סיימנו. ראו סעיף 4 |
-
-**לא להשתמש ב-`--yes`.** הוא מאשר הכל אוטומטית, כולל מצב stub, ואז אף commit לא מתבצע.
+| `⏸ REVIEW` באמצע ההרצה | **לא צריך לעשות כלום עכשיו.** הסקריפט ממשיך לבד, והפריטים מרוכזים בדוח בסוף |
+| `⛔ BLOCKED` | מטפלים בסיבה שהודפסה ומריצים שוב את אותה פקודה |
+| `🔧 PAUSE_FOR_FIX` | ה-build נכשל. ראו סעיף 3 |
+| `Approval needed: run the migration on the EXISTING branch` | `digital_V2` כבר קיים, אבל לא נוצר ע"י הסקריפט (למשל הסבה ידנית). **עוצרים ומתייעצים** |
+| `continue with a local stub` | **לא מאשרים.** חבילה פנימית לא נמצאה, כנראה בגלל הגדרות npm. בודקים את `.npmrc` ומריצים שוב |
+| `💥 FAILED` | באג בסקריפט. שומרים את הפלט ומעבירים לצוות הסקיל |
 
 ---
 
@@ -73,7 +83,7 @@ node C:\tools\mfe-migration-v2\scripts\run.js
 1. השגיאות מודפסות בפורמט `קובץ:שורה:עמודה – הודעה`. הרשימה המלאה נמצאת ב-`.migration\build-<n>.json`.
 2. מחפשים כל שגיאה ב-`C:\tools\mfe-migration-v2\reference\known-errors.md` ומתקנים לפי מה שכתוב שם.
 3. מתקנים בקוד **בלי commit**. הסקריפט יעשה commit לתיקונים בעצמו.
-4. מריצים את `Next:` (`--resume`). הסקריפט מריץ build שוב.
+4. מריצים שוב את אותה פקודה. הסקריפט מריץ build שוב ומשווה למספר השגיאות הקודם.
 
 יש עד 5 סבבים. אם מופיע `No progress` או `Reached the maximum`, עוצרים ומתייעצים.
 
@@ -84,6 +94,7 @@ node C:\tools\mfe-migration-v2\scripts\run.js
 ## 4. אחרי `RESULT: OK`
 
 - [ ] קוראים את `MIGRATION-V2-REPORT.md` בשורש השירות, **בעיקר את הסעיף "Needs manual handling"**.
+      כל פריטי ה-REVIEW מההרצה נמצאים שם. בסוף הפלט מודפס גם באילו שלבים היו פריטים כאלה.
 - [ ] מטפלים בפריטים הידניים מהדוח. אחרי זה: `git add` ו-`git commit` (את הדוח עצמו לא צריך להכניס).
 - [ ] `npm start` ובדיקה ידנית של המסכים העיקריים.
 - [ ] בודקים שהשירות עולה גם בתוך Host ישן (React 17) וגם בתוך Host חדש.
@@ -102,7 +113,7 @@ node C:\tools\mfe-migration-v2\scripts\run.js
 git checkout <בראנץ' המקור>
 git branch -D digital_V2
 Remove-Item -Recurse -Force .migration
-node C:\tools\mfe-migration-v2\scripts\run.js
+node C:\tools\mfe-migration-v2\scripts\run.js --auto
 ```
 
 נקודת ההתחלה של ההסבה מתויגת כ-`migration-start-<תאריך>`. התגים מופיעים ב-`git tag -l "migration-start-*"`.
@@ -115,3 +126,4 @@ node C:\tools\mfe-migration-v2\scripts\run.js
 - לא מריצים את הסקריפט מתוך `C:\tools\mfe-migration-v2`, רק מתוך השירות.
 - ב-PowerShell כותבים כל פקודה בשורה נפרדת, בלי `&&`.
 - התיקייה `.migration\` היא ה-state של ההרצה. לא עורכים אותה, והיא לא נכנסת ל-commit.
+- אין צורך ב-`--resume` או ב-`--yes`. `--auto` כבר ממשיך לבד, ואף דגל לא מאשר מצב stub.

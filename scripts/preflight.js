@@ -68,6 +68,13 @@ function firstLine(text) {
   return line || '';
 }
 
+// npm prints "npm notice …" / "npm warn …" before the actual error – show the error line, not the notice
+function errorLine(text) {
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /^npm (ERR!|error)/i.test(l) && !/^npm (ERR!|error)\s*$/i.test(l)) ||
+    lines.find((l) => !/^npm (notice|warn)\b/i.test(l)) || lines[0] || '';
+}
+
 function seconds(ms) {
   return Math.max(1, Math.round(ms / 1000));
 }
@@ -305,11 +312,15 @@ async function runPreflight(options, overrides) {
     let pingCheck;
     if (ping.ok) {
       pingCheck = check('npm-ping', 'npm ping', 'ok', registryLabel);
+    } else if (ping.timedOut) {
+      pingCheck = check('npm-ping', 'npm ping', 'blocked',
+        'npm ping did not respond within ' + netSec + ' seconds – no access to ' + registryLabel, { timeout: true });
     } else {
-      const msg = ping.timedOut
-        ? 'npm ping did not respond within ' + netSec + ' seconds – no access to ' + registryLabel
-        : 'npm ping to ' + registryLabel + ' failed: ' + (firstLine(ping.stderr) || firstLine(ping.stdout) || ping.message);
-      pingCheck = check('npm-ping', 'npm ping', 'blocked', msg, { timeout: !!ping.timedOut });
+      // Some registries (Azure DevOps / TFS feeds) do not implement the ping endpoint at all.
+      // A ping error is therefore only a warning – the npm view of every target version below is the real access check
+      pingCheck = check('npm-ping', 'npm ping', 'warn',
+        'npm ping to ' + registryLabel + ' failed (' + (errorLine(ping.stderr) || errorLine(ping.stdout) || ping.message) +
+        ') – some registries do not support ping; access is verified by npm view below');
     }
 
     // 6. target versions
@@ -318,7 +329,7 @@ async function runPreflight(options, overrides) {
     if (targetsError) {
       versionsCheck = check('target-versions', 'Target versions', 'blocked', targetsError);
       versionBlockers.push({ message: targetsError });
-    } else if (!ping.ok) {
+    } else if (ping.timedOut) {
       versionsCheck = skipped('target-versions', 'Target versions', 'the registry is not available');
     } else {
       const results = await Promise.all(targetSpecs(targets).map(async (spec) => {
@@ -334,7 +345,7 @@ async function runPreflight(options, overrides) {
           const notFound = /E404|404 Not Found|is not in this registry/i.test(text);
           return {
             ref: ref, spec: spec, ok: false, stub: notFound && stubbable,
-            message: ref + ': ' + (notFound ? 'package not found in the registry' : 'npm view failed – ' + (firstLine(r.stderr) || r.message)),
+            message: ref + ': ' + (notFound ? 'package not found in the registry' : 'npm view failed – ' + (errorLine(r.stderr) || r.message)),
           };
         }
         const found = r.stdout.split(/\s+/).map((s) => s.replace(/^'|'$/g, '')).filter(Boolean);

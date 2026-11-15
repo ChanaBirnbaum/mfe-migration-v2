@@ -47,7 +47,7 @@ const STEP_IDS = STEPS.map((s) => s.id);
 const SAVE_OUTPUT = (id) => id !== 'build';
 
 function parseArgs(argv) {
-  const opts = { resume: false, answers: {}, from: null, only: null, dryRun: false, yes: false, json: false, errors: [] };
+  const opts = { resume: false, answers: {}, from: null, only: null, dryRun: false, yes: false, auto: false, json: false, errors: [] };
   const stepArg = (flag, v) => {
     if (!v) { opts.errors.push(flag + ' requires a step name'); return null; }
     if (STEP_IDS.indexOf(v) === -1) {
@@ -62,6 +62,8 @@ function parseArgs(argv) {
     if (a === '--resume') opts.resume = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--yes') opts.yes = true;
+    // --auto: a developer running the pipeline alone from the terminal (see RUNBOOK.md)
+    else if (a === '--auto') opts.auto = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--answer') {
       const v = argv[++i] || '';
@@ -112,6 +114,11 @@ async function run(argv, overrides) {
   const root = deps.cwd;
   const runStep = deps.runStep || defaultRunStep(root, deps.env);
   const opts = parseArgs(argv || []);
+  // --auto is kept in every printed command, so a developer always runs the same command
+  const CMD = opts.auto ? RUN_CMD + ' --auto' : RUN_CMD;
+  // --auto continues an existing run by itself, so the next command is the very same command
+  const RESUME = opts.auto ? CMD : CMD + ' --resume';
+  const autoReviewed = [];
   const out = { script: SCRIPT, result: 'OK', changes: [], manual: [], blockers: [], notes: [], dryRun: opts.dryRun, steps: [], pause: null, next: null, state: null };
   const say = (line) => deps.print(line + '\n');
   let stubPackages = () => [];
@@ -134,7 +141,7 @@ async function run(argv, overrides) {
     say('⏸ run.js was run from inside the skill folder (' + root + '). Run it from the root of the service repo being migrated:');
     // two separate commands, no && / ; – the line must work as-is in PowerShell 5.1, cmd and bash
     say('   cd <service root>');
-    say('   ' + RUN_CMD);
+    say('   ' + CMD);
     return stop('PAUSE', { kind: 'skill-dir', message: 'cwd is inside the skill folder – nothing was written' });
   }
 
@@ -147,18 +154,21 @@ async function run(argv, overrides) {
 
   if (opts.resume && !state) {
     say('⏸ No run to resume: ' + STATE_FILE + ' not found in ' + root);
-    out.next = RUN_CMD;
+    out.next = CMD;
     return stop('PAUSE', { kind: 'no-state', message: STATE_FILE + ' not found – run without --resume to start' });
   }
   if (state && service && state.service && state.service !== service && !opts.dryRun) {
     say('⏸ ' + STATE_FILE + ' belongs to service "' + state.service + '", not "' + service + '" – not continuing');
     return stop('PAUSE', { kind: 'other-service', message: 'state.json belongs to service ' + state.service });
   }
+  // --auto: running the same command again simply continues an existing run (no "unfinished" stop, no --resume needed).
+  // Starting over is explicit: --from preflight
+  if (opts.auto && state && !opts.resume && !opts.from && !opts.only && !opts.dryRun) opts.resume = true;
   const unfinished = state && state.current;
   if (unfinished && !opts.resume && !opts.from && !opts.only && !opts.dryRun) {
     say('⏸ A previous run did not finish (stopped at ' + state.current + ').');
-    out.next = RUN_CMD + ' --resume';
-    say('Next: ' + out.next + '   |   Start over: ' + RUN_CMD + ' --from preflight');
+    out.next = CMD + ' --resume';
+    say('Next: ' + out.next + '   |   Start over: ' + CMD + ' --from preflight');
     return stop('PAUSE', { kind: 'unfinished', message: 'previous run stopped at ' + state.current });
   }
   const fresh = !state || (!opts.resume && !opts.only && !(opts.from && unfinished));
@@ -192,7 +202,7 @@ async function run(argv, overrides) {
   else if (opts.resume) startIdx = state.current ? STEP_IDS.indexOf(state.current) : STEP_IDS.length;
   const endIdx = opts.only ? startIdx + 1 : STEPS.length;
   if (opts.resume && !state.current) {
-    say('✓ The pipeline is already complete (' + (state.finishedAt || '') + '). To run again: ' + RUN_CMD + ' --from <step>');
+    say('✓ The pipeline is already complete (' + (state.finishedAt || '') + '). To run again: ' + CMD + ' --from <step>');
     out.state = state;
     return stop('OK', null);
   }
@@ -234,16 +244,17 @@ async function run(argv, overrides) {
       state.completed = state.completed.filter((s) => s !== STEP_IDS[0]);
       state.results[STEP_IDS[0]] = 'BLOCKED';
       save();
-      out.next = RUN_CMD + ' --resume';
+      out.next = RESUME;
       say('');
       say('Run where the internal registry is reachable, then: ' + out.next + ' (preflight runs again)');
       out.state = state;
       return stop('PAUSE', { kind: 'blocked', step: STEP_IDS[0], blockers: blockers });
     }
-    if (answer === 'yes' || opts.yes || opts.dryRun) {
-      const how = answer === 'yes' ? 'answer' : opts.yes ? '--yes' : 'dry-run';
+    // stub mode is approved only by the explicit answer – never by --yes / --auto (a stub run makes no commits)
+    if (answer === 'yes' || opts.dryRun) {
+      const how = answer === 'yes' ? 'answer' : 'dry-run';
       state.stubMode = { approved: true, packages: cands, registry: state.stubRegistry || null, approvedAt: deps.now().toISOString(), approvedBy: how };
-      say('⚠ STUB MODE ' + (how === 'answer' ? 'approved' : how === '--yes' ? 'approved automatically (--yes)' : '[dry-run: simulated – a real run asks first]'));
+      say('⚠ STUB MODE ' + (how === 'answer' ? 'approved' : '[dry-run: simulated – a real run asks first]'));
       explain();
       save();
       return null;
@@ -252,7 +263,7 @@ async function run(argv, overrides) {
     say(label(i, step.id) + '⏸ PAUSE     Approval needed: continue with a local stub for ' + cands.join(', '));
     explain();
     out.steps.push(stepEntry(step.id, 'PAUSE', null, null, { reason: 'stub-mode' }));
-    out.next = RUN_CMD + ' --resume --answer stub.mode=yes';
+    out.next = RESUME + ' --answer stub.mode=yes';
     say('');
     say('Next: ' + out.next);
     say('Without the stub: run where the internal registry is reachable – the pipeline stops here');
@@ -291,32 +302,42 @@ async function run(argv, overrides) {
           // יעד קיים: אין מקור – branch.js מתעלם מ---source, והאישור הוא על הבראנץ' הנוכחי
           const source = existing ? (plan.previousBranch || null) : (plan && plan.sourceBranch) || null;
           const target = (plan && plan.targetBranch) || targetAnswer || null;
-          save();
-          if (mode === 'adopt') {
-            // ההחלטה האנושית על בראנץ' שלא נוצר ע"י הסקיל נמצאת כאן – branch.js לא חוסם
-            sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: run the migration on the EXISTING branch ' + (target || '<target>'));
-            say('   ⚠ Branch ' + (target || '?') + ' already exists and was NOT created by this skill (no migration-start-* tag).');
-            say('   ⚠ The migration will run on top of it; steps already done manually will return NOOP.');
-            say('   ⚠ Restore point: a new tag ' + (plan.tag || 'migration-start-*') + ' on the current tip of ' + (target || '?') + '.');
-          } else if (mode === 'resume') {
-            sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: continue the existing migration on ' + (target || '<target>') + ' (start tag ' + (plan.tag || '?') + ')');
-            say('   switch from: ' + (source || '?') + '   →   existing branch: ' + (target || '?'));
-          } else {
-            const current = source && plan.previousBranch === source ? ' (current branch)' : '';
-            sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: create ' + (target || '<target>') + ' from ' + (source || '<source>') + current);
-            say('   branch from: ' + (source || '?') + '   →   new branch: ' + (target || '?'));
+          // --auto: creating the target from the current branch, or continuing the skill's own migration, needs no decision.
+          // A branch the skill did not create (adopt) still stops – that one is a real decision
+          const autoApproved = opts.auto && plan && (mode === 'create' || mode === 'resume');
+          if (autoApproved) {
+            say('[auto] ' + (mode === 'resume'
+              ? 'continuing the existing migration on ' + (target || '?') + ' (start tag ' + (plan.tag || '?') + ')'
+              : 'creating ' + (target || '?') + ' from ' + (source || '?') + (source && plan.previousBranch === source ? ' (current branch)' : '')));
           }
-          if (plan && plan.blockers && plan.blockers.length) {
-            say('   The pre-check found blockers to resolve before approving:');
-            printBlocked(say, plan);
+          if (!autoApproved) {
+            save();
+            if (mode === 'adopt') {
+              // ההחלטה האנושית על בראנץ' שלא נוצר ע"י הסקיל נמצאת כאן – branch.js לא חוסם
+              sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: run the migration on the EXISTING branch ' + (target || '<target>'));
+              say('   ⚠ Branch ' + (target || '?') + ' already exists and was NOT created by this skill (no migration-start-* tag).');
+              say('   ⚠ The migration will run on top of it; steps already done manually will return NOOP.');
+              say('   ⚠ Restore point: a new tag ' + (plan.tag || 'migration-start-*') + ' on the current tip of ' + (target || '?') + '.');
+            } else if (mode === 'resume') {
+              sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: continue the existing migration on ' + (target || '<target>') + ' (start tag ' + (plan.tag || '?') + ')');
+              say('   switch from: ' + (source || '?') + '   →   existing branch: ' + (target || '?'));
+            } else {
+              const current = source && plan.previousBranch === source ? ' (current branch)' : '';
+              sayStep(label(i, step.id) + '⏸ PAUSE     Approval needed: create ' + (target || '<target>') + ' from ' + (source || '<source>') + current);
+              say('   branch from: ' + (source || '?') + '   →   new branch: ' + (target || '?'));
+            }
+            if (plan && plan.blockers && plan.blockers.length) {
+              say('   The pre-check found blockers to resolve before approving:');
+              printBlocked(say, plan);
+            }
+            out.steps.push(stepEntry(step.id, 'PAUSE', null, plan, { reason: 'approval' }));
+            out.next = RESUME + ' --answer branch.source=' + (source || '<source>') + (targetAnswer ? ' --answer branch.target=' + targetAnswer : '');
+            say('');
+            say('Next: ' + out.next);
+            say('Different source: --answer branch.source=<name>   |   different target name: --answer branch.target=<name>');
+            out.state = state;
+            return stop('PAUSE', { kind: 'approval', step: step.id, key: 'branch.source', source: source, target: target, suggestion: source, targetMode: mode, targetExisted: existing });
           }
-          out.steps.push(stepEntry(step.id, 'PAUSE', null, plan, { reason: 'approval' }));
-          out.next = RUN_CMD + ' --resume --answer branch.source=' + (source || '<source>') + (targetAnswer ? ' --answer branch.target=' + targetAnswer : '');
-          say('');
-          say('Next: ' + out.next);
-          say('Different source: --answer branch.source=<name>   |   different target name: --answer branch.target=<name>');
-          out.state = state;
-          return stop('PAUSE', { kind: 'approval', step: step.id, key: 'branch.source', source: source, target: target, suggestion: source, targetMode: mode, targetExisted: existing });
         }
       }
     }
@@ -360,7 +381,7 @@ async function run(argv, overrides) {
       state.results[step.id] = 'FAILED';
       save();
       out.steps.push(stepEntry(step.id, 'FAILED', ms, null));
-      out.next = RUN_CMD + ' --resume';
+      out.next = RESUME;
       say('');
       say('Script ' + script + ' crashed. After investigating, continue with: ' + out.next);
       out.state = state;
@@ -402,13 +423,13 @@ async function run(argv, overrides) {
         sayStep(label(i, step.id) + '⏸ PAUSE     ' + why);
         state.buildWindow = { history: [] }; // --resume after a decision starts a new window
         save();
-        out.next = RUN_CMD + ' --resume';
+        out.next = RESUME;
         say('');
         say('A human decision is needed before continuing the fixes. To run more rounds: ' + out.next);
         return stop('PAUSE', { kind: 'build-stalled', step: step.id, history: w.history, reason: why });
       }
       sayStep(label(i, step.id) + '🔧 PAUSE_FOR_FIX ' + res.errorCount + ' errors' + trend + ' | round ' + w.history.length + '/' + BUILD_MAX_ROUNDS + '  ' + fmtDuration(ms));
-      out.next = RUN_CMD + ' --resume';
+      out.next = RESUME;
       say('');
       say('Fix the errors, then: ' + out.next);
       return stop('PAUSE_FOR_FIX', { kind: 'build', step: step.id, errorCount: res.errorCount, history: w.history.slice() });
@@ -428,9 +449,15 @@ async function run(argv, overrides) {
       if (!opts.only) { if (state.completed.indexOf(step.id) === -1) state.completed.push(step.id); state.current = STEP_IDS[i + 1] || null; }
       save();
       printReview(say, res);
-      out.next = RUN_CMD + ' --resume' + answerHint();
+      // --auto: no stop – the items are collected into "Needs manual handling" in MIGRATION-V2-REPORT.md, reviewed once at the end
+      if (opts.auto && !opts.only) {
+        autoReviewed.push(step.id);
+        say('  [auto] continuing – these items are also listed under "Needs manual handling" in MIGRATION-V2-REPORT.md');
+        continue;
+      }
+      out.next = RESUME + answerHint();
       say('');
-      say('After review, continue with: ' + (state.current ? RUN_CMD + ' --resume' : 'done (this was the last step)'));
+      say('After review, continue with: ' + (state.current ? RESUME : 'done (this was the last step)'));
       out.state = state;
       return stop('PAUSE', { kind: 'review', step: step.id, manual: res.manual, notes: res.notes });
     }
@@ -439,7 +466,7 @@ async function run(argv, overrides) {
     sayStep(label(i, step.id) + '⛔ BLOCKED   ' + fmtDuration(ms));
     save();
     printBlocked(say, res);
-    out.next = RUN_CMD + ' --resume';
+    out.next = RESUME;
     say('');
     say('After fixing, continue with (the step runs again): ' + out.next);
     out.state = state;
@@ -461,9 +488,13 @@ async function run(argv, overrides) {
       say('⚠ The pipeline completed IN STUB MODE – ' + stubPackages().join(', ') + ' was a local test stub, not the real package.');
       say('⚠ Only the pipeline mechanics were validated (branch, codemods, install, build, report) – NOT the shared configuration against the real package.');
       say('⚠ Nothing was committed: the working tree is left with uncommitted changes, and package.json points to a local file: path – do not commit it.');
-      say('⚠ Re-run on the internal network before any real use: ' + RUN_CMD + ' --from preflight. Report: MIGRATION-V2-REPORT.md (not committed)');
+      say('⚠ Re-run on the internal network before any real use: ' + CMD + ' --from preflight. Report: MIGRATION-V2-REPORT.md (not committed)');
     } else {
       say('✅ The pipeline is complete. Report: MIGRATION-V2-REPORT.md (not committed)');
+    }
+    if (autoReviewed.length) {
+      say('⏸ ' + autoReviewed.length + ' step(s) had items to review (' + autoReviewed.join(', ') + ') – handle the "Needs manual handling" section of MIGRATION-V2-REPORT.md before pushing');
+      out.notes.push('auto: review items were not paused on – steps: ' + autoReviewed.join(', '));
     }
   }
   return stop('OK', null);

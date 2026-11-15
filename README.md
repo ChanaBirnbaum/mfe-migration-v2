@@ -195,7 +195,8 @@ node <תיקיית הסקיל>/scripts/run.js [דגלים]
 | `--answer branch.source=<שם>` | אישור בראנץ' המקור |
 | `--answer branch.target=<שם>` | שם אחר לבראנץ' היעד במקום `digital_V2` |
 | `--answer stub.mode=yes` | אישור מצב stub |
-| `--yes` | דילוג על נקודות אישור (הרצת אצווה) |
+| `--yes` | דילוג על נקודות אישור (הרצת אצווה). לא מאשר מצב stub |
+| `--auto` | הרצה עצמאית של מפתח מהטרמינל ([RUNBOOK.md](RUNBOOK.md)): בלי אישור בראנץ', בלי עצירה על REVIEW, והרצה חוזרת של אותה פקודה ממשיכה לבד |
 | `--json` | פלט JSON במקום טקסט |
 
 השורה האחרונה בפלט היא תמיד `RESULT: OK | PAUSE | PAUSE_FOR_FIX | FAILED | NOOP`, והפקודה להמשך מודפסת בשורה `Next:`.

@@ -213,13 +213,29 @@ test('Node < 18 → node blocker', async () => {
   assert.deepStrictEqual(blockerIds(res), ['node']);
 });
 
-test('npm ping fails → npm-ping blocker, versions skipped', async () => {
-  const s = setup({ responses: { 'npm ping': fail(1, 'npm ERR! code ECONNREFUSED') } });
+test('npm ping fails but npm view works (feed without ping, e.g. Azure DevOps) → warning only, OK', async () => {
+  const stderr = 'npm notice PING https://tfs.internal/feed/npm/registry/\nnpm error code E404\nnpm error 404 Not Found - GET https://tfs.internal/feed/npm/registry/-/ping?write=true\n';
+  const s = setup({ responses: { 'npm ping': fail(1, stderr) } });
   const res = await runPreflight({}, s.deps);
-  assert.deepStrictEqual(blockerIds(res), ['npm-ping']);
-  assert.match(res.blockers[0].message, /ECONNREFUSED/);
-  assert.strictEqual(checkById(res, 'target-versions').skipped, true);
-  assert.ok(!s.calls.some((c) => c.indexOf('npm view') === 0));
+  assert.strictEqual(res.result, 'OK');
+  assert.deepStrictEqual(res.blockers, []);
+  const ping = checkById(res, 'npm-ping');
+  assert.strictEqual(ping.status, 'warn');
+  assert.match(ping.message, /npm error code E404/); // the error line, not the "npm notice PING" line
+  assert.doesNotMatch(ping.message, /npm notice/);
+  assert.strictEqual(checkById(res, 'target-versions').status, 'ok');
+  assert.ok(s.calls.some((c) => c.indexOf('npm view') === 0));
+});
+
+test('npm ping and npm view both fail → blockers come from npm view, with the npm error line', async () => {
+  const responses = { 'npm ping': fail(1, 'npm notice PING x\nnpm error code ECONNREFUSED') };
+  SPECS.forEach((sp) => { responses[viewKey(sp)] = fail(1, 'npm notice x\nnpm error code ECONNREFUSED'); });
+  const s = setup({ responses: responses });
+  const res = await runPreflight({}, s.deps);
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.ok(blockerIds(res).every((id) => id === 'target-versions'));
+  assert.strictEqual(res.blockers.length, SPECS.length);
+  assert.match(res.blockers[0].message, /npm view failed – npm error code ECONNREFUSED/);
 });
 
 test('npm ping timeout → npm-ping blocker flagged as timeout, process killed', async () => {

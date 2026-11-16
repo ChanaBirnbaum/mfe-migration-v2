@@ -10,6 +10,7 @@
     "test": "node --test"
   },
   "dependencies": {
-    "ts-morph": "^28.0.0"
+    "ts-morph": "^28.0.0",
+    "brace-expansion": "5.0.13"
   }
 }

@@ -633,6 +633,111 @@ test('--auto: no branch approval (current branch → digital_V2), REVIEW does no
   assert.strictEqual(state(root).current, null);
 });
 
+test('--auto: webpack role decision (hybrid) stops; --answer webpack.role=… is passed as --role and kept', async () => {
+  const root = repo();
+  const hybrid = (args) => (args.indexOf('--role') === -1
+    ? { result: 'BLOCKED', role: 'hybrid', blockers: [{ message: 'Hybrid service', check: 'role', answer: 'webpack.role', options: ['host', 'remote'], suggestion: 'remote' }] }
+    : { role: args[args.indexOf('--role') + 1] });
+  const m1 = mock(Object.assign({}, BRANCH_PROBE, { 'webpack-shared': hybrid }));
+  const out1 = await go(root, ['--auto'], m1);
+  assert.match(out1, /webpack-shared\s+⛔ BLOCKED/);
+  assert.match(out1, /Options: --answer webpack\.role=host {3}\| {3}--answer webpack\.role=remote/);
+  assert.match(out1, /continue with \(the step runs again\): .*--auto --answer webpack\.role=remote/);
+  assert.ok(m1.calls.every((c) => c.id !== 'install'));
+  assert.strictEqual(state(root).current, 'webpack-shared');
+
+  const m2 = mock({ 'webpack-shared': hybrid });
+  const out2 = await go(root, ['--auto', '--answer', 'webpack.role=remote'], m2);
+  assert.deepStrictEqual(m2.calls[0], { id: 'webpack-shared', args: ['--json', '--role', 'remote'] });
+  assert.deepStrictEqual(m2.calls.find((c) => c.id === 'webpack-validate').args, ['--json', '--validate-only']);
+  assert.strictEqual(state(root).answers['webpack.role'], 'remote');
+  assert.strictEqual(last(out2), 'RESULT: OK');
+});
+
+async function goWith(root, argv, m, extra) {
+  let out = '';
+  const code = await main(argv, Object.assign({ cwd: root, runStep: m.runStep }, extra), { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr used: ' + s); } });
+  assert.strictEqual(code, 0);
+  return out;
+}
+const HYBRID_DEFAULT = (args) => (args.indexOf('--role') === -1
+  ? { result: 'BLOCKED', role: 'hybrid', blockers: [{ message: 'Hybrid service', check: 'role', answer: 'webpack.role', options: ['host', 'remote'], suggestion: 'remote', autoDefault: true, autoReason: 'hybrid service' }] }
+  : { role: args[args.indexOf('--role') + 1] });
+
+test('--auto: a decision with a safe default (hybrid → remote) is taken automatically and reported', async () => {
+  const root = repo();
+  const m = mock(Object.assign({}, BRANCH_PROBE, { 'webpack-shared': HYBRID_DEFAULT }));
+  const out = await go(root, ['--auto'], m);
+  const ws = m.calls.filter((c) => c.id === 'webpack-shared');
+  assert.deepStrictEqual(ws.map((c) => c.args), [['--json'], ['--json', '--role', 'remote']]);
+  assert.match(out, /\[auto] webpack\.role=remote – hybrid service/);
+  assert.match(out, /webpack-shared\s+⏸ REVIEW/);
+  assert.match(out, /webpack\.role=remote was chosen automatically .* --from webpack-shared --answer webpack\.role=host/);
+  const saved = JSON.parse(fs.readFileSync(path.join(root, '.migration', 'webpack-shared.json'), 'utf8'));
+  assert.strictEqual(saved.result, 'REVIEW');
+  assert.match(saved.manual[0].reason, /chosen automatically/);
+  assert.deepStrictEqual(state(root).autoAnswers, { 'webpack.role': 'remote' });
+  assert.strictEqual(last(out), 'RESULT: OK');
+});
+
+test('without --auto the default is not taken – the decision still stops', async () => {
+  const root = repo();
+  const m = mock(Object.assign({}, BRANCH_PROBE, { 'webpack-shared': HYBRID_DEFAULT }));
+  await go(root, ['--yes'], m);
+  assert.strictEqual(m.calls.filter((c) => c.id === 'webpack-shared').length, 1);
+  assert.strictEqual(state(root).current, 'webpack-shared');
+});
+
+test('--auto on a finished run: skill unchanged → complete; skill updated → runs again from the first open step', async () => {
+  const root = repo();
+  await goWith(root, ['--auto'], mock(Object.assign({}, BRANCH_PROBE, {
+    'use-shared-state': { result: 'REVIEW', manual: [{ file: 'src/S.js', line: 1, reason: 'call-site' }] },
+  })), { skillFingerprint: 'v1' });
+  assert.strictEqual(state(root).skill, 'v1');
+  state(root); // finished
+  const same = mock({});
+  const o1 = await goWith(root, ['--auto'], same, { skillFingerprint: 'v1' });
+  assert.deepStrictEqual(same.calls, []);
+  assert.match(o1, /already complete .* nothing left to run/);
+
+  fs.writeFileSync(path.join(root, '.migration', 'state.json'), JSON.stringify(Object.assign(state(root), { answers: { 'branch.source': 'develop' } })));
+  const again = mock({});
+  const o2 = await goWith(root, ['--auto'], again, { skillFingerprint: 'v2' });
+  assert.match(o2, /skill was updated since the run finished – running again from use-shared-state/);
+  assert.deepStrictEqual(again.calls.map((c) => c.id), ALL.slice(ALL.indexOf('use-shared-state')));
+  assert.strictEqual(state(root).skill, 'v2');
+  assert.strictEqual(state(root).answers['branch.source'], 'develop');
+  assert.strictEqual(state(root).results.preflight, 'OK');
+  assert.strictEqual(last(o2), 'RESULT: OK');
+
+  // a run from an older skill version has no fingerprint at all → treated as updated
+  const s = state(root); delete s.skill; s.results['webpack-shared'] = 'REVIEW';
+  fs.writeFileSync(path.join(root, '.migration', 'state.json'), JSON.stringify(s));
+  const old = mock({});
+  await goWith(root, ['--auto'], old, { skillFingerprint: 'v2' });
+  assert.strictEqual(old.calls[0].id, 'webpack-shared');
+});
+
+test('--auto automatic re-run with uncommitted changes → PAUSE, nothing runs (the report and .migration do not count)', async () => {
+  const root = repo();
+  const gg = (args) => childProcess.execFileSync('git', args, { cwd: root, stdio: 'ignore', env: Object.assign({}, process.env, { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }) });
+  gg(['init', '-q']); gg(['add', 'package.json']); gg(['commit', '-q', '-m', 'init']);
+  await goWith(root, ['--auto'], mock(Object.assign({}, BRANCH_PROBE, { 'webpack-shared': { result: 'REVIEW', manual: [{ file: 'webpack.config.js', reason: 'x' }] } })), { skillFingerprint: 'v1' });
+  fs.writeFileSync(path.join(root, 'MIGRATION-V2-REPORT.md'), '# r');
+  fs.writeFileSync(path.join(root, 'Fix.jsx'), 'x');
+  const m = mock({});
+  const out = await goWith(root, ['--auto'], m, { skillFingerprint: 'v2' });
+  assert.deepStrictEqual(m.calls, []);
+  assert.match(out, /uncommitted changes/);
+  assert.match(out, /\n {5}Fix\.jsx\n/);
+  assert.doesNotMatch(out, /\n {5}MIGRATION-V2-REPORT\.md\n/);
+  assert.strictEqual(last(out), 'RESULT: PAUSE');
+  fs.unlinkSync(path.join(root, 'Fix.jsx'));
+  const m2 = mock({});
+  await goWith(root, ['--auto'], m2, { skillFingerprint: 'v2' });
+  assert.strictEqual(m2.calls[0].id, 'webpack-shared');
+});
+
 test('--auto: resume of the skill\'s own migration is not asked; adopt (branch not created by the skill) still stops', async () => {
   const resume = await go(repo(), ['--auto'], mock({
     branch: (args) => (args.indexOf('--dry-run') !== -1 ? { targetMode: 'resume', previousBranch: 'main', targetBranch: 'digital_V2', tag: 'migration-start-1' } : {}),

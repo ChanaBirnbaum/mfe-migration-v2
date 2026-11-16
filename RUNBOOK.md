@@ -11,6 +11,11 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 
 הסקריפט עוצר רק כשצריך לתקן משהו. אחרי התיקון מריצים שוב את אותה פקודה, והוא ממשיך מאיפה שעצר.
 
+**הפקודה הזו מתאימה לכל מצב.** לא צריך לדעת מאיזה שלב להמשיך:
+- ההרצה נעצרה? היא ממשיכה מאיפה שעצרה.
+- ההרצה הסתיימה ועדכנתם גרסה של הסקיל? הסקריפט מזהה את העדכון ומריץ שוב, לבד, מהשלב הראשון שנשארו בו פריטים פתוחים.
+- ההרצה הסתיימה ושום דבר לא השתנה? מודפס שהכל הושלם.
+
 זמן משוער: 15–30 דקות להרצה, ועוד זמן לתיקוני build אם יהיו.
 
 ---
@@ -71,6 +76,10 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 | `RESULT: OK` | סיימנו. ראו סעיף 4 |
 | `⏸ REVIEW` באמצע ההרצה | **לא צריך לעשות כלום עכשיו.** הסקריפט ממשיך לבד, והפריטים מרוכזים בדוח בסוף |
 | `⛔ BLOCKED` | מטפלים בסיבה שהודפסה ומריצים שוב את אותה פקודה |
+| `[auto] webpack.role=remote` | השירות היברידי: גם חושף (`exposes`) וגם טוען (`remotes`). הסקריפט בחר לבד `remote`, שזה המקרה הרגיל: ה-Host טוען את השירות. **לא צריך לעשות כלום.** הבחירה מופיעה בדוח, יחד עם הפקודה לשינוי אם השירות הוא בעצם Host |
+| `uncommitted changes` אחרי עדכון סקיל | הסקריפט רוצה להריץ שוב, אבל יש שינויים שלכם שעוד לא נכנסו ל-commit. עושים להם commit או `git stash`, ומריצים שוב את אותה פקודה |
+| `webpack-shared ⛔ BLOCKED` עם `neither exposes nor remotes` | ב-`ModuleFederationPlugin` אין `exposes` ואין `remotes`, ולכן אי אפשר לנחש את התפקיד. **מתייעצים.** הסקריפט מדפיס את הפקודה המלאה עם `--answer`, ואותה מריצים |
+| `webpack-validate ⛔ BLOCKED` עם `has not been converted` | ה-`shared` ב-`webpack.config.js` עדיין לא הוסב ל-`buildSharedGen1`, ולכן הסקריפט עוצר: בלי ההסבה ה-build היה עובר על ההגדרה הישנה. מדביקים ידנית את הקוד שהודפס, או מתייעצים |
 | `🔧 PAUSE_FOR_FIX` | ה-build נכשל. ראו סעיף 3 |
 | `Approval needed: run the migration on the EXISTING branch` | `digital_V2` כבר קיים, אבל לא נוצר ע"י הסקריפט (למשל הסבה ידנית). **עוצרים ומתייעצים** |
 | `continue with a local stub` | **לא מאשרים.** חבילה פנימית לא נמצאה, כנראה בגלל הגדרות npm. בודקים את `.npmrc` ומריצים שוב |
@@ -99,11 +108,64 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 - [ ] `npm start` ובדיקה ידנית של המסכים העיקריים.
 - [ ] בודקים שהשירות עולה גם בתוך Host ישן (React 17) וגם בתוך Host חדש.
 - [ ] `git log --oneline` – בודקים את ה-commits (`migration-v2: ...`).
+- [ ] **אופציונלי:** מאחדים את כל ה-commits ל-commit אחד שלכם (ראו "איחוד ה-commits" למטה).
 - [ ] מעלים:
 
   ```powershell
   git push -u origin digital_V2
   ```
+
+---
+
+## איחוד ה-commits ל-commit אחד (אופציונלי)
+
+הסקריפט יוצר כמה commits (`migration-v2(mechanical)`, `(infra)`, `(build-fixes)`).
+מי שמעדיף commit אחד משלו יכול לבטל את ה-commits **בלי לאבד אף שינוי**. כל השינויים חוזרים כ-staged, ומשם עושים commit כרגיל.
+
+**עושים את זה רק לפני ה-`push`.**
+
+1. מוצאים את תג ההתחלה. הוא מופיע בראש `MIGRATION-V2-REPORT.md`, בשדה `Restore tag`. אפשר גם לחפש אותו כך:
+
+   ```powershell
+   git tag -l "migration-start-*" --merged HEAD
+   ```
+
+   אם מופיעים כמה תגים, משתמשים בזה שמופיע בדוח (האחרון).
+
+2. מבטלים את ה-commits ומשאירים את השינויים:
+
+   ```powershell
+   git reset --soft migration-start-20261116-1105
+   ```
+
+   (מחליפים בשם התג שלכם.)
+
+3. בודקים:
+
+   ```powershell
+   git log --oneline -3
+   git status
+   ```
+
+   - ב-`git log` כבר אין commits של `migration-v2: ...`. ה-HEAD חוזר לנקודה שממנה ההסבה התחילה.
+   - ב-`git status` כל השינויים של ההסבה מופיעים תחת `Changes to be committed`: קבצים ששונו, קבצים חדשים וקבצים שנמחקו.
+   - `MIGRATION-V2-REPORT.md` נשאר מחוץ לזה (`Untracked`), וכך צריך להיות.
+
+4. עושים commit אחד:
+
+   ```powershell
+   git commit -m "migration to generation 2 (React 18, MUI v7)"
+   ```
+
+**מה בדיוק קורה:**
+- `--soft` מזיז רק את ה-HEAD. הוא **לא נוגע בקבצים**: הקוד נשאר בדיוק כפי שהיה אחרי ההסבה.
+- גם commits שעשיתם בעצמכם אחרי ההסבה (למשל טיפול בפריטים הידניים) נכנסים לאיחוד.
+- תג ההתחלה לא נמחק.
+
+**התחרטתם לפני ה-commit?** `git reset --soft ORIG_HEAD` מחזיר את ה-commits כמו שהיו.
+
+> ⚠ **לא** משתמשים ב-`git reset --hard` במקום `--soft`. `--hard` מוחק את כל השינויים של ההסבה.
+> ⚠ אם כבר עשיתם `push`, האיחוד יחייב `push --force`. במקרה כזה מתייעצים לפני.
 
 ---
 
@@ -117,6 +179,20 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 ```
 
 נקודת ההתחלה של ההסבה מתויגת כ-`migration-start-<תאריך>`. התגים מופיעים ב-`git tag -l "migration-start-*"`.
+
+## אחרי עדכון של הסקיל
+
+קיבלתם גרסה חדשה של הסקיל, ובשירות כבר יש הרצה שהסתיימה? מעדכנים ומריצים את אותה פקודה:
+
+```powershell
+robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR
+node C:\tools\mfe-migration-v2\scripts\run.js --auto
+```
+
+הסקריפט מזהה שהסקיל השתנה, ומריץ שוב מהשלב הראשון שנשארו בו פריטים פתוחים, עד הסוף: build, commit נוסף ודוח חדש.
+לפני כן עושים commit או `git stash` לשינויים שלכם. אם תשכחו, הסקריפט יעצור ויזכיר.
+
+**למתקדמים:** אפשר גם לבחור במפורש מאיזה שלב להריץ שוב, עם `--from <שלב>`. למשל `--from package-json` כש-`package.json` קיבל גרסה שגויה.
 
 ---
 

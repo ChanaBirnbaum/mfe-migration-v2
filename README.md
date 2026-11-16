@@ -195,6 +195,7 @@ node <תיקיית הסקיל>/scripts/run.js [דגלים]
 | `--answer branch.source=<שם>` | אישור בראנץ' המקור |
 | `--answer branch.target=<שם>` | שם אחר לבראנץ' היעד במקום `digital_V2` |
 | `--answer stub.mode=yes` | אישור מצב stub |
+| `--answer webpack.role=remote\|host` | תפקיד ב-federation לשירות היברידי (גם `exposes` וגם `remotes`) |
 | `--yes` | דילוג על נקודות אישור (הרצת אצווה). לא מאשר מצב stub |
 | `--auto` | הרצה עצמאית של מפתח מהטרמינל ([RUNBOOK.md](RUNBOOK.md)): בלי אישור בראנץ', בלי עצירה על REVIEW, והרצה חוזרת של אותה פקודה ממשיכה לבד |
 | `--json` | פלט JSON במקום טקסט |

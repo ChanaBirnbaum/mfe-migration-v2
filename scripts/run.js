@@ -43,6 +43,29 @@ const STEPS = [
   { id: 'report' },
 ];
 const STEP_IDS = STEPS.map((s) => s.id);
+// --answer keys that are passed to a step as a flag (the answer is kept in state.answers)
+const ANSWER_FLAGS = { 'webpack.role': { step: 'webpack-shared', flag: '--role' } };
+// files in the service that the pipeline itself leaves uncommitted – they do not make the tree "dirty" for an automatic re-run
+const OWN_FILES = /^(\.migration\/|MIGRATION-V2-REPORT\.md$)/;
+
+// Fingerprint of the skill's code and reference data. A finished run records it; when it changes (a new version was
+// copied in), --auto runs again from the first step that had open items, instead of "already complete"
+function skillFingerprint(fs) {
+  const h = require('crypto').createHash('sha256');
+  ['scripts', 'reference', 'assets'].forEach((dir) => {
+    let names = [];
+    try { names = fs.readdirSync(path.join(SKILL_ROOT, dir)).sort(); } catch (_) { names = []; }
+    names.forEach((n) => {
+      const p = path.join(SKILL_ROOT, dir, n);
+      try {
+        if (!fs.statSync(p).isFile()) return;
+        h.update(dir + '/' + n + '\0');
+        h.update(fs.readFileSync(p));
+      } catch (_) { /* unreadable – not part of the fingerprint */ }
+    });
+  });
+  return h.digest('hex').slice(0, 16);
+}
 // build writes its own build-<n>.json; everything else is saved for report.js
 const SAVE_OUTPUT = (id) => id !== 'build';
 
@@ -164,6 +187,31 @@ async function run(argv, overrides) {
   // --auto: running the same command again simply continues an existing run (no "unfinished" stop, no --resume needed).
   // Starting over is explicit: --from preflight
   if (opts.auto && state && !opts.resume && !opts.from && !opts.only && !opts.dryRun) opts.resume = true;
+
+  // --auto on a finished run, after the skill was updated: run again from the first step that had open items
+  // (REVIEW / BLOCKED) – the developer never has to work out --from. Skill unchanged → "already complete" as before
+  const fingerprint = deps.skillFingerprint || skillFingerprint(fs);
+  let carryAnswers = null;
+  if (opts.auto && state && !state.current && state.finishedAt && !opts.from && !opts.only && !opts.dryRun && state.skill !== fingerprint) {
+    const after = STEP_IDS.indexOf('branch');
+    const firstOpen = STEP_IDS.find((id, idx) => idx > after && (state.results[id] === 'REVIEW' || state.results[id] === 'BLOCKED'));
+    if (firstOpen) {
+      // שינויים פתוחים של המפתח היו נכנסים ל-commit אוטומטי של ההרצה החוזרת – עוצרים קודם
+      const dirty = dirtyFiles(deps, root);
+      if (dirty.length) {
+        say('⏸ The skill was updated since the run finished, and the migration will run again from ' + firstOpen + '.');
+        say('   But there are uncommitted changes – they would be swallowed into the automatic commits:');
+        dirty.slice(0, 30).forEach((f) => say('     ' + f));
+        say('   Commit or stash them (git stash), then run the same command again: ' + CMD);
+        out.next = CMD;
+        return stop('PAUSE', { kind: 'dirty-rerun', step: firstOpen, files: dirty });
+      }
+      say('↻ The skill was updated since the run finished – running again from ' + firstOpen + ' (the first step that had open items)');
+      carryAnswers = state.answers || {};
+      opts.from = firstOpen;
+      opts.resume = false;
+    }
+  }
   const unfinished = state && state.current;
   if (unfinished && !opts.resume && !opts.from && !opts.only && !opts.dryRun) {
     say('⏸ A previous run did not finish (stopped at ' + state.current + ').');
@@ -176,8 +224,10 @@ async function run(argv, overrides) {
     const prev = state;
     state = {
       startedAt: deps.now().toISOString(), service: service, completed: [], current: STEP_IDS[0],
-      results: {}, answers: {}, buildIterations: 0, buildWindow: { history: [] },
+      results: {}, answers: Object.assign({}, carryAnswers), buildIterations: 0, buildWindow: { history: [] },
     };
+    // an automatic re-run keeps the answers, and the step results of the steps it does not run again
+    if (carryAnswers && prev) STEP_IDS.slice(0, STEP_IDS.indexOf(opts.from)).forEach((id) => { if (prev.results[id]) state.results[id] = prev.results[id]; });
     // --from <a later step> does not re-run preflight, so an approved stub decision stays; --from preflight decides again
     if (prev && opts.from && opts.from !== STEP_IDS[0] && prev.stubMode) {
       ['stubMode', 'stubCandidates', 'stubRegistry'].forEach((k) => { if (prev[k] !== undefined) state[k] = prev[k]; });
@@ -202,7 +252,9 @@ async function run(argv, overrides) {
   else if (opts.resume) startIdx = state.current ? STEP_IDS.indexOf(state.current) : STEP_IDS.length;
   const endIdx = opts.only ? startIdx + 1 : STEPS.length;
   if (opts.resume && !state.current) {
-    say('✓ The pipeline is already complete (' + (state.finishedAt || '') + '). To run again: ' + CMD + ' --from <step>');
+    if (state.skill !== fingerprint && !opts.dryRun) { state.skill = fingerprint; save(); }
+    say('✓ The pipeline is already complete (' + (state.finishedAt || '') + ') – nothing left to run. Report: MIGRATION-V2-REPORT.md');
+    say('  To run a step again anyway: ' + CMD + ' --from <step>');
     out.state = state;
     return stop('OK', null);
   }
@@ -275,6 +327,9 @@ async function run(argv, overrides) {
     const step = STEPS[i];
     const script = step.script || step.id;
     const args = ['--json'].concat(step.args || []);
+    Object.keys(ANSWER_FLAGS).forEach((key) => {
+      if (ANSWER_FLAGS[key].step === step.id && state.answers[key]) args.push(ANSWER_FLAGS[key].flag, state.answers[key]);
+    });
     if (opts.dryRun) args.push('--dry-run');
     if (!opts.only) state.current = step.id;
 
@@ -355,9 +410,32 @@ async function run(argv, overrides) {
     } else {
       r = await runStep(script, args, stubEnv());
     }
-    const ms = Date.now() - t0;
     let res = null;
     if (r.exitCode === 0) { try { res = JSON.parse(r.stdout); } catch (_) { res = null; } }
+
+    // --auto: a decision with a safe default (blocker.autoDefault, e.g. webpack.role=remote for a hybrid service) is
+    // taken automatically – the step runs again with it, and the choice is listed under "Needs manual handling"
+    const auto = res && opts.auto && !opts.dryRun && res.result === 'BLOCKED' &&
+      (res.blockers || []).find((b) => b.answer && b.autoDefault && b.suggestion && ANSWER_FLAGS[b.answer] && !state.answers[b.answer]);
+    if (auto) {
+      state.answers[auto.answer] = auto.suggestion;
+      state.autoAnswers = Object.assign({}, state.autoAnswers, { [auto.answer]: auto.suggestion });
+      say('  [auto] ' + auto.answer + '=' + auto.suggestion + ' – ' + (auto.autoReason || 'the default'));
+      r = await runStep(script, args.concat([ANSWER_FLAGS[auto.answer].flag, auto.suggestion]), stubEnv());
+      res = null;
+      if (r.exitCode === 0) { try { res = JSON.parse(r.stdout); } catch (_) { res = null; } }
+      if (res) {
+        const others = (auto.options || []).filter((o) => o !== auto.suggestion);
+        res.manual = (res.manual || []).concat([{
+          file: null, line: null,
+          reason: auto.answer + '=' + auto.suggestion + ' was chosen automatically (' + (auto.autoReason || 'default') + '). ' +
+            'If that is wrong: ' + CMD + ' --from ' + step.id + ' --answer ' + auto.answer + '=' + (others[0] || '<value>'),
+        }]);
+        // the choice must be seen – an OK step becomes REVIEW, so it is reported (and paused on without --auto)
+        if (res.result === 'OK') res.result = 'REVIEW';
+      }
+    }
+    const ms = Date.now() - t0;
 
     // preflight: who may be stubbed. Available again → stub mode is dropped (never stub what the registry has)
     if (res && step.id === STEP_IDS[0]) {
@@ -467,6 +545,12 @@ async function run(argv, overrides) {
     save();
     printBlocked(say, res);
     out.next = RESUME;
+    // blocker שמחכה להחלטה (למשל webpack.role) – הפקודה הבאה כוללת את התשובה המוצעת
+    const decision = (res.blockers || []).find((b) => b.answer);
+    if (decision) {
+      out.next = RESUME + ' --answer ' + decision.answer + '=' + (decision.suggestion || '<value>');
+      if (decision.options) say('  Options: ' + decision.options.map((o) => '--answer ' + decision.answer + '=' + o).join('   |   '));
+    }
     say('');
     say('After fixing, continue with (the step runs again): ' + out.next);
     out.state = state;
@@ -482,6 +566,7 @@ async function run(argv, overrides) {
   if (!opts.only) {
     state.current = null;
     state.finishedAt = deps.now().toISOString();
+    state.skill = fingerprint;
     save();
     say('');
     if (stubPackages().length) {
@@ -498,6 +583,17 @@ async function run(argv, overrides) {
     }
   }
   return stop('OK', null);
+}
+
+// uncommitted changes in the service, except the pipeline's own files. Not a git repo / git failed → [] (preflight reports it)
+function dirtyFiles(deps, root) {
+  try {
+    const out = String(deps.cp.execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }));
+    return out.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim())
+      .map((l) => l.slice(3).replace(/^"|"$/g, '')).filter((f) => !OWN_FILES.test(f));
+  } catch (_) {
+    return [];
+  }
 }
 
 function ensureGitExclude(deps, root, out) {

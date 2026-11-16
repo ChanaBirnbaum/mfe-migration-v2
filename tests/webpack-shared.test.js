@@ -62,15 +62,43 @@ test('golden: plain object config, host; deps still used → kept, pkg added nex
   assert.ok(res.notes.some((n) => /deps is used elsewhere/.test(n)));
 });
 
-test('golden: hybrid → REVIEW with paste code, file unchanged', () => {
+test('golden: hybrid without --role → BLOCKED with the webpack.role decision, file unchanged', () => {
   const f = fixture('hybrid');
   const root = repo({ 'webpack.config.js': f.input });
   const res = run([], { cwd: root });
-  assert.strictEqual(res.result, 'REVIEW');
+  assert.strictEqual(res.result, 'BLOCKED');
   assert.strictEqual(res.role, 'hybrid');
   assert.strictEqual(cfg(root), f.expected);
-  assert.match(res.manual[0].reason, /Hybrid/);
-  assert.match(res.manual[0].code, /buildSharedGen1\(\{ pkg, require, role: /);
+  assert.match(res.blockers[0].message, /Hybrid/);
+  assert.strictEqual(res.blockers[0].answer, 'webpack.role');
+  assert.deepStrictEqual(res.blockers[0].options, ['host', 'remote']);
+  assert.strictEqual(res.blockers[0].suggestion, 'remote');
+  assert.strictEqual(res.blockers[0].autoDefault, true); // run.js --auto takes it
+});
+
+test('neither exposes nor remotes → BLOCKED without an automatic default', () => {
+  const root = repo({ 'webpack.config.js': "const { ModuleFederationPlugin } = require('webpack').container;\nmodule.exports = { plugins: [new ModuleFederationPlugin({ name: 'x', shared: ['react'] })] };\n" });
+  const res = run([], { cwd: root });
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.match(res.blockers[0].message, /neither exposes nor remotes/);
+  assert.ok(!res.blockers[0].autoDefault);
+});
+
+test('hybrid with --role remote / host → converted with that role', () => {
+  ['remote', 'host'].forEach((role) => {
+    const root = repo({ 'webpack.config.js': fixture('hybrid').input });
+    const res = run(['--role', role], { cwd: root });
+    assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers.concat(res.manual)));
+    assert.strictEqual(res.role, role);
+    assert.ok(cfg(root).indexOf("buildSharedGen1({ pkg, require, role: '" + role + "' })") !== -1, cfg(root));
+    assert.ok(res.notes.some((n) => /chosen explicitly \(hybrid service\)/.test(n)));
+  });
+});
+
+test('--role: invalid value → BLOCKED', () => {
+  const root = repo({ 'webpack.config.js': fixture('hybrid').input });
+  assert.strictEqual(run(['--role', 'standalone'], { cwd: root }).result, 'BLOCKED');
+  assert.strictEqual(run(['--role'], { cwd: root }).result, 'BLOCKED');
 });
 
 test('golden: already converted → NOOP', () => {
@@ -227,12 +255,12 @@ test('--validate-only: before install (no node_modules / package missing) → BL
   assert.match(noPkg.blockers[0].message, /@ips\/mfe-shared-deps is not installed/);
 });
 
-test('--validate-only: shared not converted yet → REVIEW, file not touched', () => {
+test('--validate-only: shared not converted yet → BLOCKED (the build would pass on the old shared), file not touched', () => {
   const f = fixture('sviva-function');
   const root = repo(Object.assign({ 'webpack.config.js': f.input }, FAKE_MODULES));
   const res = validateOnly(root);
-  assert.strictEqual(res.result, 'REVIEW');
-  assert.match(res.manual[0].reason, /has not been converted to buildSharedGen1 yet/);
+  assert.strictEqual(res.result, 'BLOCKED');
+  assert.match(res.blockers[0].message, /has not been converted to buildSharedGen1 yet/);
   assert.strictEqual(cfg(root), f.input);
 });
 

@@ -49,6 +49,8 @@ node <skill-dir>/scripts/run.js [--resume] [--answer <key>=<value>]... [--from <
 - `--answer branch.source=<שם>` – אישור בראנץ' המקור שממנו מסתעפים (נקודת האישור). `--answer branch.target=<שם>` – שם אחר לבראנץ' היעד במקום `digital_V2` (אופציונלי; אפשר לחזור על הדגל)
 - `--from` / `--only` – לפי שמות השלבים בעמודה "שלב ב-run.js"
 - `--answer stub.mode=yes` – אישור מצב stub אחרי PAUSE מסוג `stub-mode` (חבילה פנימית לא נמצאה ב-registry). ההחלטה נשמרת ב-`state.stubMode`. כל ערך אחר → נעצר כמו preflight חסום
+- `--answer webpack.role=remote|host` – תפקיד ב-federation כש-`webpack-shared` חסום על שירות היברידי (גם `exposes` וגם `remotes`) או על שירות בלי שניהם. מועבר ל-`webpack-shared.js` כ-`--role` ונשמר ב-state. ב-`--auto`, שירות היברידי מקבל `remote` אוטומטית (`state.autoAnswers`), והבחירה נרשמת כפריט REVIEW בדוח
+- `--auto` על הרצה שהסתיימה: אם הסקיל השתנה מאז (טביעת אצבע של `scripts/`, `reference/` ו-`assets/` ב-`state.skill`), ההרצה ממשיכה לבד מהשלב הראשון אחרי `branch` שהסתיים ב-REVIEW או ב-BLOCKED. התשובות נשמרות. אם יש שינויים לא מחויבים מחוץ ל-`.migration/` ולדוח, ההרצה נעצרת (`dirty-rerun`)
 - `--yes` – דילוג על נקודות אישור (הרצת אצווה). **לא** מאשר מצב stub – זה רק `--answer stub.mode=yes`
 - `--auto` – הרצה עצמאית של מפתח מהטרמינל, בלי Claude ([RUNBOOK.md](../RUNBOOK.md)):
   - יצירת `digital_V2` מהבראנץ' הנוכחי, או המשך הסבה קיימת של הסקיל – בלי עצירה לאישור

@@ -13,18 +13,26 @@ const SCRIPT = 'webpack-shared';
 const CONFIG = 'webpack.config.js';
 const SHARED_PKG = '@ips/mfe-shared-deps';
 const VALID_ROLES = ['host', 'remote', 'standalone'];
+// --role (run.js: --answer webpack.role=…) – the decision when exposes/remotes do not determine the role
+const CHOOSABLE_ROLES = ['host', 'remote'];
+const ROLE_ANSWER = 'webpack.role';
 const MARKER = '// MIGRATION-V2: previous shared config';
 const VALIDATE_TIMEOUT_MS = 60000;
 const VALIDATE_ENV = 'dev'; // npm run build:dev → --env sviva=dev
 
 function parseArgs(argv) {
-  const opts = { dryRun: false, json: false, validateOnly: false, errors: [] };
-  argv.forEach((a) => {
+  const opts = { dryRun: false, json: false, validateOnly: false, role: null, errors: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--validate-only') opts.validateOnly = true;
-    else opts.errors.push('Unknown argument: ' + a);
-  });
+    else if (a === '--role' || a.startsWith('--role=')) {
+      const v = a === '--role' ? argv[++i] : a.slice('--role='.length);
+      if (CHOOSABLE_ROLES.indexOf(v) === -1) opts.errors.push('--role must be one of: ' + CHOOSABLE_ROLES.join(' | ') + ' (got "' + (v || '') + '")');
+      else opts.role = v;
+    } else opts.errors.push('Unknown argument: ' + a);
+  }
   return opts;
 }
 
@@ -223,8 +231,10 @@ function run(argv, overrides) {
       res.notes.push('No ModuleFederationPlugin – standalone service, no shared to validate');
       return res;
     }
+    // BLOCKED ולא REVIEW: בלי ההמרה ה-build "עובר" על ה-shared הישן – הסבה שלא הוסבה. גם ב---auto עוצרים כאן
     if (!a.alreadyMigrated) {
-      return review('shared has not been converted to buildSharedGen1 yet – nothing to validate. Run webpack-shared without --validate-only, or paste the code from the previous step manually');
+      return blocked('shared has not been converted to buildSharedGen1 yet – the build would pass on the OLD shared config. ' +
+        'Handle the webpack-shared item (hybrid: --answer ' + ROLE_ANSWER + '=remote|host and run again from webpack-shared), or paste the code manually');
     }
     res.validation = validate(deps);
     if (!res.validation.ran) {
@@ -260,12 +270,32 @@ function run(argv, overrides) {
   }
   if (a.esm) return review(CONFIG + ' is written in ESM (import/export) – require is not available; convert manually', pasteCode('remote', a.quote));
   if (!a.options) return review('The ModuleFederationPlugin options are not an object literal – paste manually', pasteCode('remote', a.quote));
-  if (a.hasExposes && a.hasRemotes) {
-    res.role = 'hybrid';
-    return review("Hybrid service (both exposes and remotes) – choose role: 'host' or 'remote'. buildSharedGen1 accepts only " + VALID_ROLES.join(' | '), pasteCode('remote', a.quote));
+  const detected = a.hasExposes && a.hasRemotes ? 'hybrid' : a.hasExposes ? 'remote' : a.hasRemotes ? 'host' : null;
+  // תפקיד לא מוכרע: BLOCKED (לא REVIEW) – גם --auto עוצר, כי בלי תפקיד אין המרה בכלל. ההחלטה: --role / --answer webpack.role
+  if (!opts.role && (detected === 'hybrid' || detected === null)) {
+    res.role = detected;
+    res.result = 'BLOCKED';
+    res.blockers.push({
+      message: (detected === 'hybrid'
+        ? 'Hybrid service (both exposes and remotes)'
+        : 'ModuleFederationPlugin has neither exposes nor remotes') +
+        " – choose the role: 'remote' (the service is loaded by a Host) or 'host' (it only loads other services). Nothing was changed",
+      check: 'role', answer: ROLE_ANSWER, options: CHOOSABLE_ROLES, suggestion: 'remote',
+    });
+    // היברידי: remote הוא המקרה הרגיל (Host טוען את השירות, והוא טוען אחרים) – run.js --auto בוחר אותו לבד ומדווח בדוח.
+    // בלי exposes ובלי remotes אין ברירת מחדל בטוחה – גם --auto עוצר
+    if (detected === 'hybrid') {
+      Object.assign(res.blockers[0], {
+        autoDefault: true,
+        autoReason: "hybrid service (both exposes and remotes) – 'remote' is right when a Host loads this service",
+      });
+    }
+    return res;
   }
-  if (!a.hasExposes && !a.hasRemotes) return review('ModuleFederationPlugin has neither exposes nor remotes – cannot determine the role', pasteCode('remote', a.quote));
-  const role = a.hasExposes ? 'remote' : 'host';
+  const role = opts.role || detected;
+  if (opts.role && detected && detected !== opts.role) {
+    res.notes.push('role ' + opts.role + ' was chosen explicitly (' + (detected === 'hybrid' ? 'hybrid service' : 'detected: ' + detected) + ')');
+  }
   if (VALID_ROLES.indexOf(role) === -1) throw new Error('invalid role ' + role); // FederationConfigError guard
   res.role = role;
 

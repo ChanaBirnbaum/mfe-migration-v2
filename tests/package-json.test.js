@@ -110,7 +110,7 @@ test('@material-ui/icons declared but no inventory → icons added, REVIEW', () 
   const root = repo(read('crlf-dev-only', 'before.json'));
   const res = run([], deps(root));
   assert.strictEqual(res.result, 'REVIEW');
-  assert.strictEqual(JSON.parse(pkgOf(root)).dependencies['@mui/icons-material'], '^7.3.11');
+  assert.strictEqual(JSON.parse(pkgOf(root)).dependencies['@mui/icons-material'], '^7.3.0');
 });
 
 test('inventory without icons usage → icons not added', () => {

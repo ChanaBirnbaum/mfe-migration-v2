@@ -145,7 +145,7 @@ RESULT: OK | PAUSE | PAUSE_FOR_FIX | FAILED | NOOP
   "@emotion/react": "^11.14.0",
   "@emotion/styled": "^11.11.0",
   "@mui/material": "^7.3.11",
-  "@mui/icons-material": "^7.3.11",
+  "@mui/icons-material": "^7.3.0",
   "@mui/x-date-pickers": "^9.3.0"
 }
 ```

@@ -119,6 +119,19 @@ test('.migration/ is never committed', () => {
   assert.strictEqual(g(r.work, ['ls-files', '.migration']), '');
 });
 
+test('.migration/ already ignored (info/exclude from run.js, or .gitignore) → git add does not fail', () => {
+  const r = makeRepo();
+  fs.appendFileSync(g(r.work, ['rev-parse', '--git-path', 'info/exclude']).replace(/^(?![A-Za-z]:|\/)/, r.work + '/'), '\n.migration/\n');
+  write(r.work, '.gitignore', 'MIGRATION-V2-REPORT.md\n');
+  write(r.work, '.migration/state.json', '{}');
+  write(r.work, 'MIGRATION-V2-REPORT.md', '# r');
+  write(r.work, 'src/x.js', 'x');
+  const res = run(['--step', 'mechanical'], deps(r.work));
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
+  assert.deepStrictEqual(res.changes.map((c) => c.file).sort(), ['.gitignore', 'src/x.js']);
+  assert.strictEqual(g(r.work, ['ls-files', '.migration', 'MIGRATION-V2-REPORT.md']), '');
+});
+
 test('--dry-run: correct count and message, index and HEAD untouched', () => {
   const r = makeRepo();
   write(r.work, 'src/App.jsx', 'changed\n');

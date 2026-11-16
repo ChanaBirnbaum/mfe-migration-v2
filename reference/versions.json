@@ -19,7 +19,7 @@
     "react-router-dom": "routerImports"
   },
   "conditionalDependencies": {
-    "@mui/icons-material": "^7.3.11"
+    "@mui/icons-material": "^7.3.0"
   },
   "requiredDependencies": {
     "_comment": "null = resolve the latest published version from the registry at run time (written as ^x.y.z)",

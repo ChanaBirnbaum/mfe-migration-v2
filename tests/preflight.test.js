@@ -115,7 +115,7 @@ test('all target versions are queried with the exact version', async () => {
     'npm view react-dom@18.3.1 version',
     'npm view react-router-dom@6.30.1 version',
     'npm view @mui/material@7.3.11 version',
-    'npm view @mui/icons-material@7.3.11 version',
+    'npm view @mui/icons-material@7.3.0 version',
     'npm view @mui/x-date-pickers@9.3.0 version',
     'npm view @emotion/react@11.14.0 version',
     'npm view @emotion/styled@11.11.0 version',

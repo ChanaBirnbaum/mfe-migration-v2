@@ -191,7 +191,10 @@ function run(argv, overrides) {
       env = Object.assign({}, deps.env, { GIT_INDEX_FILE: tmpIndex });
     }
 
-    const addArgs = ['add', '-A', '--', '.'].concat((config.excludePaths || []).map((p) => ':(exclude)' + p));
+    // נתיב שכבר מוחרג ב-gitignore / info/exclude (run.js מוסיף את .migration ל-info/exclude) לא נכנס ממילא,
+    // ו-git add נכשל (exit 1, "paths are ignored") כשנתיב כזה מופיע ב-pathspec – גם כ-:(exclude). לכן מחריגים רק את מה שלא מוחרג כבר
+    const notIgnored = (config.excludePaths || []).filter((p) => !git(['check-ignore', '-q', '--no-index', '--', p], env).ok);
+    const addArgs = ['add', '-A', '--', '.'].concat(notIgnored.map((p) => ':(exclude)' + p));
     const add = git(addArgs, env);
     res.commands.push({ command: displayCommand(addArgs), status: add.ok ? (opts.dryRun ? 'simulated' : 'done') : 'failed' });
     if (!add.ok) {

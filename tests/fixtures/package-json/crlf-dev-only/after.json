@@ -12,7 +12,7 @@
         "@emotion/styled": "^11.11.0",
         "@mui/material": "^7.3.11",
         "@mui/x-date-pickers": "^9.3.0",
-        "@mui/icons-material": "^7.3.11",
+        "@mui/icons-material": "^7.3.0",
         "@ips/mfe-shared-deps": "^1.4.0"
     },
     "devDependencies": {

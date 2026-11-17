@@ -270,7 +270,7 @@ function run(argv, overrides) {
   };
 
   // 2 + 8. target versions (adds to dependencies also when only in devDependencies)
-  // usageGated (react-router-dom): קיים → מעודכן ולעולם לא מוסר; לא קיים → נוסף רק אם המלאי מראה שימוש.
+  // usageGated (react-router-dom, @mui/x-date-pickers): קיים → מעודכן ולעולם לא מוסר; לא קיים → נוסף רק אם המלאי מראה שימוש.
   // אין צורך "ליתר ביטחון": buildSharedGen1 מכניסה את react-router לקטלוג גם בלי הצהרה, אם הוא מותקן
   const gated = versions.usageGated || {};
   dataKeys(versions.dependencies).forEach((name) => {

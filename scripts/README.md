@@ -25,7 +25,7 @@
 | 4 | package-json | `package-json.js` | גרסאות היעד, עריכה נקודתית שמשמרת פורמט. pickers → review. במצב stub: `file:<נתיב מוחלט ל-stub>` לחבילות ה-stub בלבד (חבילה שזמינה ב-registry → BLOCKED) | `--inventory <נתיב>` | `package.json` |
 | 5 | codemod-mui-imports | `codemod-mui-imports.js` | `@material-ui/*` → `@mui/*`, שינויי שמות, `palette.type` | – | `src/**` |
 | 6 | codemod-react18 | `codemod-react18.js` | `createRoot` ב-bootstrap, ‏`defaultProps`, ‏`FC` + children | – | `src/**` |
-| 7 | codemod-anti-patterns | `codemod-anti-patterns.js` | `useEffect(async …)` → פונקציה פנימית + cancelled guard | `--no-cancel-guard` | `src/**` |
+| 7 | codemod-anti-patterns | `codemod-anti-patterns.js` | `useEffect(async …)` → `run()` (עם await) או הסרת `async` (בלי await) + cancelled guard על setState אחרי await / בתוך `.then` – רק כשיש כזה | `--no-cancel-guard` | `src/**` |
 | 8 | commit-mechanical | `commit.js --step mechanical` | commit לשלבים 4–7. **במצב stub שלושת שלבי ה-commit מדולגים** (NOOP); `package.json` עם `file:` ל-stub לעולם לא נכנס ל-commit | – | commit |
 | 9 | codemod-makestyles | `codemod-makestyles.js` | `makeStyles` → אובייקט סגנונות דרך `sx` / `slotProps` | – | `src/**` |
 | 10 | use-shared-state | `use-shared-state.js` | מתקין את `assets/useSharedState.v<גרסה>.js` (גרסה מ-`reference/versions.json`, sha256 מאומת מול `assets/useSharedState.meta.json`) ובודק את ה-call-sites | – | `src/**`, גיבוי ב-`.migration/backup/` |

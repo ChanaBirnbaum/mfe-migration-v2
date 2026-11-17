@@ -90,7 +90,9 @@ test('hybrid with --role remote / host → converted with that role', () => {
     const res = run(['--role', role], { cwd: root });
     assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers.concat(res.manual)));
     assert.strictEqual(res.role, role);
-    assert.ok(cfg(root).indexOf("buildSharedGen1({ pkg, require, role: '" + role + "' })") !== -1, cfg(root));
+    // the hybrid fixture is ({ sviva }) => … → remote runs as standalone locally; host stays a literal
+    const expectedRole = role === 'remote' ? "sviva === 'local' ? 'standalone' : 'remote'" : "'" + role + "'";
+    assert.ok(cfg(root).indexOf('buildSharedGen1({ pkg, require, role: ' + expectedRole + ' })') !== -1, cfg(root));
     assert.ok(res.notes.some((n) => /chosen explicitly \(hybrid service\)/.test(n)));
   });
 });
@@ -107,6 +109,66 @@ test('golden: already converted → NOOP', () => {
   const res = run([], { cwd: root });
   assert.strictEqual(res.result, 'NOOP');
   assert.strictEqual(cfg(root), f.expected);
+});
+
+// ---- local run: role by sviva ----
+
+const migratedWith = (role) => fixture('sviva-function').expected.replace("role: sviva === 'local' ? 'standalone' : 'remote'", 'role: ' + role);
+
+test("already migrated with role: 'remote' + sviva in scope → upgraded to the sviva ternary, rest unchanged", () => {
+  const f = fixture('sviva-function');
+  const root = repo({ 'webpack.config.js': migratedWith("'remote'") });
+  const res = run([], { cwd: root });
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res));
+  assert.strictEqual(res.role, 'remote');
+  assert.strictEqual(res.changes.length, 1);
+  assert.strictEqual(res.changes[0].rule, 'WEBPACK.ROLE_LOCAL');
+  assert.strictEqual(cfg(root), f.expected);
+});
+
+test('already migrated upgrade: --dry-run writes nothing; host role is left alone', () => {
+  const src = migratedWith("'remote'");
+  const root = repo({ 'webpack.config.js': src });
+  assert.strictEqual(run(['--dry-run'], { cwd: root }).result, 'OK');
+  assert.strictEqual(cfg(root), src);
+
+  const host = migratedWith("'host'");
+  const hostRoot = repo({ 'webpack.config.js': host });
+  assert.strictEqual(run([], { cwd: hostRoot }).result, 'NOOP');
+  assert.strictEqual(cfg(hostRoot), host);
+});
+
+test('already migrated upgrade with node_modules → validated with sviva=dev', () => {
+  const root = repo(Object.assign({ 'webpack.config.js': migratedWith("'remote'") }, FAKE_MODULES));
+  const res = run([], { cwd: root });
+  assert.strictEqual(res.result, 'OK', JSON.stringify(res.manual));
+  assert.deepStrictEqual(res.validation, { ran: true, ok: true, env: 'dev' });
+});
+
+test('sviva binding shapes: renamed destructuring and env identifier', () => {
+  const src = (param) => [
+    'const ModuleFederationPlugin = require("webpack/lib/container/ModuleFederationPlugin");',
+    'module.exports = (' + param + ') => ({ plugins: [new ModuleFederationPlugin({ exposes: { "./A": "./src/A.jsx" }, shared: {} })] });',
+    '',
+  ].join('\n');
+  const a = repo({ 'webpack.config.js': src('{ sviva: env }') });
+  run([], { cwd: a });
+  assert.match(cfg(a), /role: env === 'local' \? 'standalone' : 'remote'/);
+  const b = repo({ 'webpack.config.js': src('env') });
+  run([], { cwd: b });
+  assert.match(cfg(b), /role: env\.sviva === 'local' \? 'standalone' : 'remote'/);
+});
+
+test('the converted config really picks standalone for sviva=local and remote otherwise', () => {
+  const root = repo(Object.assign({ 'webpack.config.js': fixture('sviva-function').input }, FAKE_MODULES, {
+    'node_modules/@ips/mfe-shared-deps/index.js': 'exports.buildSharedGen1 = ({ role }) => ({ role });',
+  }));
+  run([], { cwd: root });
+  const config = require(path.join(root, 'webpack.config.js'));
+  const roleFor = (sviva) => config({ sviva }).plugins[0].o.shared.role;
+  assert.strictEqual(roleFor('local'), 'standalone');
+  assert.strictEqual(roleFor('dev'), 'remote');
+  assert.strictEqual(roleFor('prod'), 'remote');
 });
 
 // ---- other shapes ----
@@ -149,7 +211,8 @@ test('no shared property → added; no deps line → requires inserted after the
       '',
     ].join('\n'),
   });
-  run([], { cwd: root });
+  const res = run([], { cwd: root });
+  assert.ok(res.notes.some((n) => /no sviva parameter was found/.test(n)), res.notes.join('\n'));
   assert.strictEqual(cfg(root), [
     'const ModuleFederationPlugin = require("webpack/lib/container/ModuleFederationPlugin");',
     'const pkg = require("./package.json");',
@@ -308,7 +371,7 @@ test('overlapping edits → BLOCKED with file:line + paste code, exit 0, file un
   const code = main([], { cwd: root, applyEdits: overlapping }, { stdout: (s) => { out += s; }, stderr: (s) => { throw new Error('stderr: ' + s); } });
   assert.strictEqual(code, 0);
   assert.match(out, /⛔ webpack\.config\.js:\d+ – webpack-shared produced two overlapping edits at the same place \(a bug in the script\)\. The file was not changed/);
-  assert.match(out, /\| shared: buildSharedGen1\(\{ pkg, require, role: 'remote' \}\),/);
+  assert.match(out, /\| shared: buildSharedGen1\(\{ pkg, require, role: sviva === 'local' \? 'standalone' : 'remote' \}\),/);
   assert.match(out, /RESULT: BLOCKED\n$/);
   assert.strictEqual(cfg(root), f.input);
 });

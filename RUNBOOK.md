@@ -25,20 +25,27 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 > **חשוב:** את הסקריפט שמים **מחוץ** לריפו של השירות. לא ב-`.claude/skills` של השירות.
 > אחרת git של השירות רואה אותו כקבצים חדשים, וההרצה נעצרת על "git לא נקי".
 
-מעתיקים את התיקייה `mfe-migration-v2`, **כולל `node_modules`**, ל-**`C:\tools\mfe-migration-v2`**.
-כל הפקודות בקובץ הזה מניחות את הנתיב הזה.
+1. מעתיקים את התיקייה `mfe-migration-v2` מהתיקייה המשותפת ל-**`C:\tools\mfe-migration-v2`** במחשב המקומי.
+   כל הפקודות בקובץ הזה מניחות את הנתיב הזה.
 
-```powershell
-robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR
-```
+   ```powershell
+   robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR /XD node_modules
+   ```
 
-- **לא מריצים `npm ci` בתיקיית הסקיל.** `ts-morph` עדיין לא קיים ב-feed הפנימי, ולכן `npm ci` נכשל עם 404.
-  התיקייה מגיעה כשהחבילות כבר מותקנות.
+2. מתקינים את החבילות של הסקיל (`ts-morph`) מה-feed הפנימי:
+
+   ```powershell
+   cd C:\tools\mfe-migration-v2
+   npm i
+   ```
+
+3. עוברים לשירות וממשיכים לסעיף 1.
+
 - לא מריצים את הסקריפט ישירות מנתיב רשת (`\\server\...`), אלא רק מהעותק המקומי.
   מנתיב רשת `ts-morph` לא נטען, ומופיעה הודעה מטעה שמבקשת להריץ npm install.
-- כשמתפרסמת גרסה חדשה של הסקיל, מריצים שוב את אותה פקודת `robocopy`.
+- כשמתפרסמת גרסה חדשה של הסקיל, חוזרים על שלבים 1–2 (`robocopy` ואז `npm i`). ראו "אחרי עדכון של הסקיל".
 
-דרישות: Node 18 ומעלה, git, וגישה ל-registry הפנימי (בשביל ה-`npm install` של **השירות**).
+דרישות: Node 18 ומעלה, git, וגישה ל-registry הפנימי (בשביל ה-`npm i` של הסקיל וה-`npm install` של השירות).
 
 > `npm ping` מול ה-feed ב-TFS נכשל תמיד, כי ה-feed לא תומך בפקודה הזו. זה לא חוסם את ההרצה:
 > preflight מציג אזהרה ובודק את הגישה דרך `npm view`.
@@ -185,7 +192,10 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 קיבלתם גרסה חדשה של הסקיל, ובשירות כבר יש הרצה שהסתיימה? מעדכנים ומריצים את אותה פקודה:
 
 ```powershell
-robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR
+robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR /XD node_modules
+cd C:\tools\mfe-migration-v2
+npm i
+cd C:\path\to\my-service
 node C:\tools\mfe-migration-v2\scripts\run.js --auto
 ```
 

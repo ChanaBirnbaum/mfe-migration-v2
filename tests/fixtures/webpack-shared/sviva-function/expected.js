@@ -27,7 +27,7 @@ module.exports = ({ sviva }) => {
         //   react: { singleton: true, requiredVersion: deps.react },
         //   "react-dom": { singleton: true, requiredVersion: deps["react-dom"] },
         // },
-        shared: buildSharedGen1({ pkg, require, role: 'remote' }),
+        shared: buildSharedGen1({ pkg, require, role: sviva === 'local' ? 'standalone' : 'remote' }),
       }),
       new HtmlWebPackPlugin({ template: "./src/index.html" }),
     ],

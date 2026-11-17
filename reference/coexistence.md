@@ -10,13 +10,21 @@
 
 ## למה React 17 תחת Host ישן
 
-`buildSharedGen1({ pkg, require, role: 'remote' })` מגדיר את `react`, ‏`react-dom`, ‏`react-router` ו-`react-router-dom`:
+`buildSharedGen1({ pkg, require, role: sviva === 'local' ? 'standalone' : 'remote' })` – בכל סביבה חוץ מ-`local` התפקיד הוא `remote`, ובו מוגדרים `react`, ‏`react-dom`, ‏`react-router` ו-`react-router-dom` כך:
 
 - `singleton: true` – עותק אחד בכל הדף
 - `requiredVersion: '^17.0.0 || ' + הטווח מ-package.json` – גרסה 17 של ה-Host מתקבלת
 - `import: false` – השירות **לא** מביא עותק משלו. הוא משתמש במה שה-Host סיפק
 
 לכן תחת Host ישן הקוד של השירות רץ על React 17 ועל גרסת ה-router של ה-Host, גם אם ב-package.json כתוב 18.
+
+## למה `standalone` ב-`sviva=local`
+
+עם `role: 'remote'` גם הרצה מקומית לא מביאה React משלה (`import: false`), ולוקחת את מה שנמצא ב-share scope.
+אם בדף נטען שירות שעוד לא הוסב (remote, ‏shell), הוא רושם `react-dom` 17. ‏`react-dom/client` המקומי (18) מקבל אותו וקורס:
+`TypeError: m.createRoot is not a function` (client.js).
+לכן `webpack-shared` כותב תפקיד לפי `sviva` כשהפרמטר קיים בקונפיג. בשירות שכבר הוסב עם `role: 'remote'` קבוע, הרצה חוזרת של `webpack-shared` מעדכנת אותו (`WEBPACK.ROLE_LOCAL`).
+אם אין `sviva` בקונפיג, התפקיד נשאר `'remote'` ומופיעה הערה בדוח.
 
 `devDependencies` נחשבות לא מוצהרות ב-`buildSharedGen1` – לכן `react` ו-`react-dom` חייבים להיות ב-`dependencies`.
 

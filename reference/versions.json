@@ -16,7 +16,8 @@
   },
   "usageGated": {
     "_comment": "Packages from 'dependencies' that are added only if already declared (dependencies or devDependencies) or the named scan inventory list is non-empty. Never removed when declared.",
-    "react-router-dom": "routerImports"
+    "react-router-dom": "routerImports",
+    "@mui/x-date-pickers": "pickers"
   },
   "conditionalDependencies": {
     "@mui/icons-material": "^7.3.0"

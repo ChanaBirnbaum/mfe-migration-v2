@@ -59,6 +59,13 @@ package-json.js סימן את המעבר כ-review והוסיף פריט manual 
 
 **תיקון:** אל תשנה את הקוד. הרץ שוב את ההתקנה: `--from install`.
 
+### `TypeError: m.createRoot is not a function` (client.js, בהרצה מקומית)
+
+**סיבה:** ב-`webpack.config.js` כתוב `role: 'remote'` קבוע, ולכן גם ב-`sviva=local` השירות לא מביא React משלו (`import: false`).
+`react-dom/client` (18) מקבל `react-dom` 17 מה-share scope, בדרך כלל משירות אחר שנטען בדף ועוד לא הוסב.
+
+**תיקון:** `role: sviva === 'local' ? 'standalone' : 'remote'`. בשירות שכבר הוסב: `--only webpack-shared` (או `node <skill>/scripts/webpack-shared.js` בתיקיית השירות). הסקריפט מעדכן רק את ה-role. ראו [coexistence.md](coexistence.md).
+
 ---
 
 ## TypeScript

@@ -97,7 +97,7 @@ Claude אחראי על ההרצה, על נקודות ההחלטה ועל תיק�
 | 4 | `package-json` | מעדכן גרסאות: React 18, ‏`@mui/material` 7, Emotion, ‏`@ips/mfe-shared-deps`, ‏`@types/react` 18; מסיר את חבילות `@material-ui/*`. העריכה נקודתית ושומרת על הפורמט של הקובץ |
 | 5 | `codemod-mui-imports` | ממיר ייבואים `@material-ui/*` ל-`@mui/*`, כולל שינויי שמות של קומפוננטות ואייקונים ו-`palette.type` שהופך ל-`palette.mode` |
 | 6 | `codemod-react18` | `createRoot` במקום `ReactDOM.render` ב-bootstrap, הסרת `defaultProps` בקומפוננטות פונקציה, ‏`children` מפורש ב-`FC` (TypeScript) |
-| 7 | `codemod-anti-patterns` | `useEffect(async …)` מוחלף בפונקציה פנימית עם cancelled guard (מתאים ל-StrictMode של React 18) |
+| 7 | `codemod-anti-patterns` | `useEffect(async …)` → effect רגיל: עם `await` – פונקציה פנימית `run`, בלי `await` – רק הסרת `async`. ‏cancelled guard על כל `setState` אחרי `await` או בתוך `.then`/`.catch` (מתאים ל-StrictMode של React 18); אין `setState` כזה – אין guard |
 | 8 | `commit-mechanical` | commit לשלבים 4–7 |
 
 ### שלב ג' – סגנונות ותשתית → commit שני

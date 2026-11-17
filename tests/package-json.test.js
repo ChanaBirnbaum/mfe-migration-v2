@@ -324,13 +324,40 @@ test('pickers: no inventory → one manual item on package.json pointing to scan
   assert.match(res.manual[0].reason, /^Moving from pickers v3\/v5 to x-date-pickers v9 — .*scan\.js/);
 });
 
-test('pickers: x-date-pickers only added (never declared) → stays auto, no manual', () => {
-  const res = run([], deps(repo(read('no-icons', 'before.json'))));
+const pickersOf = (root) => JSON.parse(pkgOf(root)).dependencies['@mui/x-date-pickers'];
+
+test('pickers: never declared + inventory shows pickers usage → added, stays auto, no manual', () => {
+  const root = repo(read('no-icons', 'before.json'), { pickers: [{ file: 'src/Form.jsx', line: 3, module: '@mui/x-date-pickers/DatePicker', names: ['DatePicker'] }] });
+  const res = run([], deps(root));
   assert.strictEqual(res.result, 'OK');
   const add = res.changes.find((c) => /x-date-pickers/.test(c.detail));
   assert.strictEqual(add.rule, 'PKG.ADD');
   assert.strictEqual(add.confidence, 'auto');
+  assert.match(add.detail, /used according to inventory/);
   assert.deepStrictEqual(res.manual, []);
+  assert.strictEqual(pickersOf(root), '^9.3.0');
+});
+
+test('pickers: never declared + no pickers usage → not added, note explains why', () => {
+  const root = repo(read('no-icons', 'before.json'), { pickers: [] });
+  const res = run([], deps(root));
+  assert.strictEqual(pickersOf(root), undefined);
+  assert.ok(res.notes.some((n) => /^@mui\/x-date-pickers not added – .*inventory shows no usage/.test(n)), res.notes.join('\n'));
+});
+
+test('pickers: never declared + no inventory → not added, note points to scan.js', () => {
+  const root = repo(read('no-icons', 'before.json'));
+  const res = run([], deps(root));
+  assert.strictEqual(pickersOf(root), undefined);
+  assert.ok(res.notes.some((n) => /^@mui\/x-date-pickers not added – .*run scan\.js/.test(n)), res.notes.join('\n'));
+});
+
+test('pickers: @material-ui/pickers declared but unused → removed, x-date-pickers not added', () => {
+  const root = repo('{\n  "name": "x",\n  "dependencies": {\n    "@material-ui/pickers": "^3.3.10",\n    "react": "^17.0.2"\n  }\n}\n', { pickers: [] });
+  run([], deps(root));
+  const d = JSON.parse(pkgOf(root)).dependencies;
+  assert.strictEqual(d['@material-ui/pickers'], undefined);
+  assert.strictEqual(d['@mui/x-date-pickers'], undefined);
 });
 
 // ---- expected failures → BLOCKED, exit 0 ----

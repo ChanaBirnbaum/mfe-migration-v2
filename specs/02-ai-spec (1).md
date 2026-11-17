@@ -151,6 +151,8 @@ RESULT: OK | PAUSE | PAUSE_FOR_FIX | FAILED | NOOP
 ```
 גרסת החבילה: `"version": "2.0.0"`
 
+`react-router-dom`, ‏`@mui/x-date-pickers` ו-`@mui/icons-material` נוספות רק אם כבר הוצהרו או שה-scan מצא שימוש בהן (`usageGated` / `conditionalDependencies` ב-`versions.json`).
+
 ### webpack.config.js – המבנה בפועל
 
 ```js
@@ -193,8 +195,10 @@ module.exports = ({ sviva }) => {
 const pkg = require("./package.json");
 const { buildSharedGen1 } = require("@ips/mfe-shared-deps");
 // ...
-shared: buildSharedGen1({ pkg, require, role: 'remote' })
+shared: buildSharedGen1({ pkg, require, role: sviva === 'local' ? 'standalone' : 'remote' })
 ```
+
+ב-`remote` כשיש `sviva` בקונפיג: `local` → `'standalone'`, כדי שהרצה מקומית תביא React 18 משלה. בלי `sviva`, ‏`'remote'` קבוע + הערה.
 
 | | |
 |---|---|

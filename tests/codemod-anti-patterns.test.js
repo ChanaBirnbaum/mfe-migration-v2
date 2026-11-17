@@ -71,6 +71,17 @@ test('golden: --no-cancel-guard', () => {
   assert.strictEqual(res.cancelGuard, false);
 });
 
+test('golden: no await – async removed without run(); setState in .then / .then(setX) guarded; nothing to guard → no flag', () => {
+  const { res, again } = golden('promise-then');
+  assert.strictEqual(res.result, 'OK');
+  assert.deepStrictEqual(res.changes.map((c) => c.detail), [
+    'useEffect(async …) → async removed + cancelled guard',
+    'useEffect(async …) → async removed + cancelled guard',
+    'useEffect(async …) → async removed',
+  ]);
+  assert.strictEqual(again.result, 'NOOP');
+});
+
 // ---- extra cases ----
 
 function convert(src, args) {
@@ -78,6 +89,77 @@ function convert(src, args) {
   const res = run(args || [], { cwd: root });
   return { res: res, out: readIn(root, 'src/C.jsx') };
 }
+
+const effectOf = (body, params) => [
+  "import { useEffect, useState } from 'react';",
+  'export function A(' + (params || '') + ') {',
+  '  const [v, setV] = useState();',
+  '  useEffect(async () => {',
+  body,
+  '  }, []);',
+  '}',
+  '',
+].join('\n');
+
+test('await without any setState → run() but no cancelled flag', () => {
+  const { res, out } = convert(effectOf('    await track();'));
+  assert.strictEqual(res.changes[0].detail, 'useEffect(async …) → run()');
+  assert.doesNotMatch(out, /cancelled/);
+  assert.match(out, /const run = async \(\) => \{\n {6}await track\(\);\n {4}\};\n {4}run\(\);\n {2}\}, \[\]\);/);
+});
+
+test('await + .then callback in the same effect → both guarded, one flag', () => {
+  const { out } = convert(effectOf('    const r = await load();\n    setV(r);\n    more().then((m) => { setV(m); });'));
+  assert.strictEqual(out.match(/let cancelled = false;/g).length, 1);
+  assert.match(out, /if \(!cancelled\) setV\(r\);/);
+  assert.match(out, /more\(\)\.then\(\(m\) => \{ if \(!cancelled\) setV\(m\); \}\);/);
+});
+
+test('nested .then inside .then, and async .then callback with await → guarded', () => {
+  const { out } = convert(effectOf('    a().then((x) => b(x).then((y) => setV(y)));\n    c().then(async (r) => { const d = await r.json(); setV(d); });'));
+  assert.match(out, /b\(x\)\.then\(\(y\) => \{ if \(!cancelled\) setV\(y\); \}\)/);
+  assert.match(out, /const d = await r\.json\(\); if \(!cancelled\) setV\(d\);/);
+  assert.doesNotMatch(out, /const run/);
+});
+
+test('setState in a non-promise callback (setTimeout, forEach) → not guarded; no flag', () => {
+  const { out } = convert(effectOf('    setTimeout(() => setV(1), 0);\n    [1].forEach((x) => { setV(x); });'));
+  assert.doesNotMatch(out, /cancelled/);
+});
+
+test('brace-less if inside .then → block added; setState in an expression inside .then → manual', () => {
+  const ok = convert(effectOf('    load().then((r) => { if (r) setV(r); else setV(null); });')).out;
+  assert.match(ok, /if \(r\) \{ if \(!cancelled\) setV\(r\); \} else \{ if \(!cancelled\) setV\(null\); \}/);
+
+  const { res, out } = convert(effectOf('    load().then((r) => r && setV(r));'));
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.match(res.manual[0].reason, /\.then\/\.catch within an expression/);
+  assert.match(out, /useEffect\(async/);
+});
+
+test('no await but the effect returns a value → kept inside run() (a sync effect may only return a cleanup)', () => {
+  const { out } = convert(effectOf('    return load().then((r) => setV(r));'));
+  assert.match(out, /const run = async \(\) => \{\n {6}return load\(\)\.then\(\(r\) => \{ if \(!cancelled\) setV\(r\); \}\);/);
+});
+
+test('no await with an existing cleanup → cleanup kept, merged with the flag', () => {
+  const { out } = convert(effectOf('    load().then((r) => setV(r));\n    return () => abort();'));
+  assert.doesNotMatch(out, /const run/);
+  assert.match(out, /return \(\) => \{ cancelled = true; abort\(\); \};/);
+});
+
+test('setter-like prop inside .then → not wrapped, effect marked review', () => {
+  const { res, out } = convert(effectOf('    load().then((t) => setTitle(t));', '{ setTitle }'));
+  assert.strictEqual(res.result, 'REVIEW');
+  assert.match(res.changes[0].reason, /setTitle.*inside \.then/);
+  assert.match(out, /load\(\)\.then\(\(t\) => setTitle\(t\)\);/);
+  assert.doesNotMatch(out, /cancelled/);
+});
+
+test('--no-cancel-guard with .then → async removed, nothing guarded', () => {
+  const { out } = convert(effectOf('    load().then((r) => setV(r));'), ['--no-cancel-guard']);
+  assert.match(out, /useEffect\(\(\) => \{\n {4}load\(\)\.then\(\(r\) => setV\(r\)\);\n {2}\}, \[\]\);/);
+});
 
 test('setX(await f()) is split so the guard runs after the await', () => {
   const { out } = convert([

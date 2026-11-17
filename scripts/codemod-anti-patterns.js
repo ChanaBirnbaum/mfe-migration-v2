@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// codemod-anti-patterns: useEffect(async () => …) → sync effect that runs an inner async function,
-// with a `cancelled` guard on every setState that happens after an await (React 18 StrictMode mounts twice).
+// codemod-anti-patterns: useEffect(async () => …) → sync effect.
+// - with await: the body moves into an inner async function run()
+// - without await: only `async` is dropped (no run)
+// A `cancelled` guard wraps every setState that happens after an await or inside a .then/.catch/.finally callback
+// (React 18 StrictMode mounts twice). No such setState → no guard at all (no dead flag).
 // ts-morph only; edits are position-based so the rest of the file is untouched.
 
 const path = require('path');
@@ -15,6 +18,7 @@ const EFFECT_HOOKS = ['useEffect', 'useLayoutEffect'];
 const STATE_HOOKS = ['useState', 'useReducer'];
 // משמש רק לסימון review של פונקציה שהגיעה כ-prop – לעולם לא כדי להחליט מה לעטוף
 const PROP_SETTER_NAME = /^set[A-Z]\w*$/;
+const PROMISE_METHODS = ['then', 'catch', 'finally'];
 
 class CodemodError extends Error {}
 class Manual extends Error {}
@@ -115,7 +119,7 @@ function transformFile(tsm, sf, file, opts) {
       const edit = transformEffect(effect, fn);
       edits.push(edit);
       changes.push({ file: file, line: line, rule: 'EFFECT.ASYNC', confidence: edit.review ? 'review' : 'auto',
-        detail: reactApi(effect.getExpression()) + '(async …) → ' + (opts.guard ? 'run() + cancelled guard' : 'run()'),
+        detail: reactApi(effect.getExpression()) + '(async …) → ' + (edit.useRun ? 'run()' : 'async removed') + (edit.guarded ? ' + cancelled guard' : ''),
         reason: edit.review || undefined });
     } catch (err) {
       if (!(err instanceof Manual)) throw err;
@@ -184,15 +188,36 @@ function transformFile(tsm, sf, file, opts) {
         }
       });
     }
+    // .then/.catch/.finally callbacks: a function passed to such a call (through parentheses)
+    const outerParens = (n) => { while (n.getParent() && Node.isParenthesizedExpression(n.getParent())) n = n.getParent(); return n; };
+    const promiseCallOf = (arg) => {
+      const p = arg.getParent();
+      if (!p || !Node.isCallExpression(p) || p.getArguments().indexOf(arg) === -1) return null;
+      const e = p.getExpression();
+      return Node.isPropertyAccessExpression(e) && PROMISE_METHODS.indexOf(e.getName()) !== -1 ? p : null;
+    };
+    const isPromiseCallback = (f) => (Node.isArrowFunction(f) || Node.isFunctionExpression(f)) && !!promiseCallOf(outerParens(f));
+    // every function between node and the effect is a promise callback; 'callback' = at least one, 'effect' = none
+    const promiseDepth = (node) => {
+      let any = false;
+      for (let f = ownerFn(node); f; f = ownerFn(f)) {
+        if (f === fn) return any ? 'callback' : 'effect';
+        if (!isPromiseCallback(f)) return null;
+        any = true;
+      }
+      return null;
+    };
+    const promiseCallbacks = fn.getDescendants().filter((d) => isPromiseCallback(d) && promiseDepth(d) !== null);
+
     // setter שהגיע כ-prop – אי אפשר לדעת אם הוא מעדכן state; לא עוטפים, מסמנים review
-    const propSetterCalls = opts.guard && awaits.length ? fn.getDescendantsOfKind(K.CallExpression).filter((call) => {
+    const propSetterCalls = opts.guard && (awaits.length || promiseCallbacks.length) ? fn.getDescendantsOfKind(K.CallExpression).filter((call) => {
       const c = call.getExpression();
       if (Node.isIdentifier(c)) return propLocals.has(c.getText()) && !setters.has(c.getText()) && PROP_SETTER_NAME.test(c.getText());
       return Node.isPropertyAccessExpression(c) && !!propsName && Node.isIdentifier(c.getExpression()) &&
         c.getExpression().getText() === propsName && PROP_SETTER_NAME.test(c.getName());
     }).map((call) => call.getExpression().getText()) : [];
     const review = propSetterCalls.length
-      ? 'Call to ' + Array.from(new Set(propSetterCalls)).join(', ') + ' – a function that came in as a prop, not from a local useState, so it was not wrapped in the cancelled guard. Check manually whether it updates state after await'
+      ? 'Call to ' + Array.from(new Set(propSetterCalls)).join(', ') + ' – a function that came in as a prop, not from a local useState, so it was not wrapped in the cancelled guard. Check manually whether it updates state after await / inside .then'
       : null;
 
     // body → statements
@@ -226,11 +251,16 @@ function transformFile(tsm, sf, file, opts) {
       }
     }
 
+    // run() only when there is an await; a returned value (not a cleanup) also needs it – a sync effect may return only a cleanup
+    const returnsValue = returns.some((r) => (!cleanup || r !== cleanup.ret) && r.getExpression());
+    const useRun = awaits.length > 0 || returnsValue;
+
     const cancelled = opts.guard ? pick(['cancelled', 'isCancelled', 'effectCancelled']) : null;
-    const runName = pick(['run', 'runEffect', 'runEffect2']);
+    const runName = useRun ? pick(['run', 'runEffect', 'runEffect2']) : null;
 
     // ---- guard edits inside the body ----
     const inner = [];
+    let guarded = 0;
     const hasAwait = (n) => own(n, fn, K.AwaitExpression).length > 0 || (Node.isAwaitExpression(n) && ownerFn(n) === fn);
 
     function guardStatement(st, seen, braceless) {
@@ -253,8 +283,37 @@ function transformFile(tsm, sf, file, opts) {
         replacement = 'if (!' + cancelled + ') ' + st.getText();
         if (braceless) replacement = '{ ' + replacement + ' }';
       }
-      if (replacement !== null) inner.push({ start: st.getStart(), end: st.getEnd(), text: replacement });
+      if (replacement !== null) { inner.push({ start: st.getStart(), end: st.getEnd(), text: replacement }); guarded++; }
       return seen || awaitInside;
+    }
+
+    // setState inside .then/.catch/.finally callbacks – runs after the effect may already be gone
+    function guardPromiseCallbacks() {
+      fn.getDescendantsOfKind(K.CallExpression).forEach((call) => {
+        // .then(setX) – the setter itself is the callback
+        if (Node.isPropertyAccessExpression(call.getExpression()) &&
+            PROMISE_METHODS.indexOf(call.getExpression().getName()) !== -1 && promiseDepth(call) !== null) {
+          call.getArguments().forEach((arg) => {
+            if (!Node.isIdentifier(arg) || !setters.has(arg.getText())) return;
+            inner.push({ start: arg.getStart(), end: arg.getEnd(), text: '(value) => { if (!' + cancelled + ') ' + arg.getText() + '(value); }' });
+            guarded++;
+          });
+        }
+        if (!isSetState(call) || promiseDepth(call) !== 'callback') return;
+        const parent = call.getParent();
+        if (Node.isExpressionStatement(parent)) {
+          const container = parent.getParent();
+          const plain = Node.isBlock(container) || Node.isCaseClause(container) || Node.isDefaultClause(container);
+          const text2 = 'if (!' + cancelled + ') ' + parent.getText();
+          inner.push({ start: parent.getStart(), end: parent.getEnd(), text: plain ? text2 : '{ ' + text2 + ' }' });
+        } else if (Node.isArrowFunction(parent) && parent.getBody() === call) {
+          // res => setX(res.data)
+          inner.push({ start: call.getStart(), end: call.getEnd(), text: '{ if (!' + cancelled + ') ' + call.getText() + '; }' });
+        } else {
+          throw new Manual('setState inside .then/.catch within an expression (line ' + call.getStartLineNumber() + ') – add the cancelled check manually');
+        }
+        guarded++;
+      });
     }
 
     const isSetStateStatement = (st) => Node.isExpressionStatement(st) && Node.isCallExpression(unwrap(st.getExpression())) && isSetState(unwrap(st.getExpression()));
@@ -297,6 +356,9 @@ function transformFile(tsm, sf, file, opts) {
       return seen || hasAwait(st);
     }
     if (opts.guard && isBlock) walk(statements.filter((s) => !cleanup || s !== cleanup.ret), false);
+    if (opts.guard) guardPromiseCallbacks();
+    // nothing to protect → no flag at all
+    const needGuard = guarded > 0;
 
     // ---- assemble ----
     const base = lineIndent(text, isBlock ? body.getEnd() - 1 : effect.getStart());
@@ -308,39 +370,45 @@ function transformFile(tsm, sf, file, opts) {
     const i1 = base + unit;
     const i2 = i1 + unit;
 
-    let runBody;
+    // the effect body (with the guard edits), indented one level deeper when it moves into run()
+    const start = isBlock ? body.getStart() + 1 : body.getStart();
+    const end = isBlock ? body.getEnd() - 1 : body.getEnd();
+    if (isBlock && cleanup) {
+      // remove "return () => …" together with the line break before it
+      const prev = statements.indexOf(cleanup.ret) > 0 ? statements[statements.indexOf(cleanup.ret) - 1].getEnd() : start;
+      inner.push({ start: prev, end: cleanup.ret.getEnd(), text: '' });
+    }
+    const shifted = inner.map((e) => ({ start: e.start - start, end: e.end - start, text: e.text }));
+    const content = applyEdits(text.slice(start, end), shifted, start);
+    let bodyText;
     if (isBlock) {
-      const start = body.getStart() + 1;
-      const end = body.getEnd() - 1;
-      if (cleanup) {
-        // remove "return () => …" together with the line break before it
-        const prev = statements.indexOf(cleanup.ret) > 0 ? statements[statements.indexOf(cleanup.ret) - 1].getEnd() : start;
-        inner.push({ start: prev, end: cleanup.ret.getEnd(), text: '' });
-      }
-      const shifted = inner.map((e) => ({ start: e.start - start, end: e.end - start, text: e.text }));
-      const content = applyEdits(text.slice(start, end), shifted, start);
       const multilineTemplate = fn.getDescendants().some((d) =>
         (Node.isTemplateExpression(d) || Node.isNoSubstitutionTemplateLiteral(d)) && d.getStartLineNumber() !== d.getEndLineNumber());
       let lines = content.split(/\r?\n/);
       if (lines.length === 1) lines = [i1 + lines[0].trim()];
       while (lines.length && lines[0].trim() === '') lines.shift();
       while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+      const extra = useRun ? unit : '';
       // תבנית מחרוזת רב-שורתית: הזחה נוספת תשנה את התוכן שלה – משאירים כמו שהוא
-      runBody = lines.map((l) => (l.trim() === '' || multilineTemplate ? l : unit + l)).join(eol);
+      bodyText = lines.map((l) => (l.trim() === '' || multilineTemplate ? l : extra + l)).join(eol);
     } else {
-      runBody = i2 + body.getText() + ';';
+      bodyText = (useRun ? i2 : i1) + content + ';';
     }
 
     const out = ['() => {'];
-    if (opts.guard) out.push(i1 + 'let ' + cancelled + ' = false;');
-    out.push(i1 + 'const ' + runName + ' = async () => {');
-    if (runBody) out.push(runBody);
-    out.push(i1 + '};');
-    out.push(i1 + runName + '();');
+    if (needGuard) out.push(i1 + 'let ' + cancelled + ' = false;');
+    if (useRun) {
+      out.push(i1 + 'const ' + runName + ' = async () => {');
+      if (bodyText) out.push(bodyText);
+      out.push(i1 + '};');
+      out.push(i1 + runName + '();');
+    } else if (bodyText) {
+      out.push(bodyText);
+    }
 
     if (cleanup) {
       const e = cleanup.expr;
-      if (!opts.guard) {
+      if (!needGuard) {
         out.push(i1 + 'return ' + e.getText() + ';');
       } else if ((Node.isArrowFunction(e) || Node.isFunctionExpression(e)) && Node.isBlock(e.getBody())) {
         const b = e.getBody();
@@ -357,11 +425,11 @@ function transformFile(tsm, sf, file, opts) {
       } else {
         out.push(i1 + 'return () => { ' + cancelled + ' = true; ' + e.getText() + '(); };');
       }
-    } else if (opts.guard) {
+    } else if (needGuard) {
       out.push(i1 + 'return () => { ' + cancelled + ' = true; };');
     }
     out.push(base + '}');
-    return { start: fn.getStart(), end: fn.getEnd(), text: out.join(eol), review: review };
+    return { start: fn.getStart(), end: fn.getEnd(), text: out.join(eol), review: review, useRun: useRun, guarded: needGuard };
   }
 
   return { edits: edits, changes: changes, manual: manual };

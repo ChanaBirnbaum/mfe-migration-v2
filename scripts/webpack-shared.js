@@ -76,14 +76,45 @@ function lineIndent(text, pos) {
   return /^[ \t]*/.exec(text.slice(ls))[0];
 }
 
-function pasteCode(role, q) {
-  return [
+// remote + sviva in scope → standalone when running locally (webpack serve, sviva=local).
+// With role 'remote', buildSharedGen1 sets import: false – the service would not bring its own React,
+// and react-dom/client (18) would get whatever react-dom is in the share scope (e.g. 17) → "createRoot is not a function".
+function roleExpr(role, sviva) {
+  if (role === 'remote' && sviva) return sviva + " === 'local' ? 'standalone' : 'remote'";
+  return "'" + role + "'";
+}
+
+function pasteCode(role, q, sviva) {
+  const L = [
     'const pkg = require(' + q + './package.json' + q + ');',
     'const { buildSharedGen1 } = require(' + q + SHARED_PKG + q + ');',
     '',
     '// inside new ModuleFederationPlugin({ ... }):',
-    "shared: buildSharedGen1({ pkg, require, role: '" + role + "' }),",
-  ].join('\n');
+  ];
+  if (role === 'remote' && !sviva) L.push("// if the config receives sviva: role: sviva === 'local' ? 'standalone' : 'remote'");
+  L.push('shared: buildSharedGen1({ pkg, require, role: ' + roleExpr(role, sviva) + ' }),');
+  return L.join('\n');
+}
+
+// The expression that holds sviva where the plugin is created: ({ sviva }) => … → 'sviva', ({ sviva: s }) → 's', (env) → 'env.sviva'
+function findSviva(tsm, node) {
+  const { Node } = tsm;
+  for (let n = node.getParent(); n; n = n.getParent()) {
+    if (!(Node.isArrowFunction(n) || Node.isFunctionExpression(n) || Node.isFunctionDeclaration(n))) continue;
+    const p = n.getParameters()[0];
+    if (!p) continue;
+    const name = p.getNameNode();
+    if (Node.isObjectBindingPattern(name)) {
+      const el = name.getElements().find((e) => {
+        const pn = e.getPropertyNameNode();
+        return (pn ? pn.getText() : e.getName()) === 'sviva' && !e.getDotDotDotToken() && Node.isIdentifier(e.getNameNode());
+      });
+      if (el) return el.getName();
+    } else if (Node.isIdentifier(name)) {
+      return name.getText() + '.sviva';
+    }
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +146,8 @@ function analyse(tsm, text) {
   if (firstRequire) r.quote = firstRequire.getArguments()[0].getText().charAt(0);
 
   // already migrated?
-  r.alreadyMigrated = sf.getDescendantsOfKind(K.CallExpression).some((c) => Node.isIdentifier(c.getExpression()) && c.getExpression().getText() === 'buildSharedGen1');
+  r.buildCalls = sf.getDescendantsOfKind(K.CallExpression).filter((c) => Node.isIdentifier(c.getExpression()) && c.getExpression().getText() === 'buildSharedGen1');
+  r.alreadyMigrated = r.buildCalls.length > 0;
 
   // module.exports shape
   r.esm = sf.getImportDeclarations().length > 0 || sf.getExportAssignments().length > 0;
@@ -149,6 +181,7 @@ function analyse(tsm, text) {
   });
 
   if (r.plugins.length === 1) {
+    r.sviva = findSviva(tsm, r.plugins[0]);
     const opts = resolveInit(r.plugins[0].getArguments()[0]);
     r.options = opts && Node.isObjectLiteralExpression(opts) ? opts : null;
     if (r.options) {
@@ -252,9 +285,19 @@ function run(argv, overrides) {
   res.notes.push.apply(res.notes, a.notes);
 
   if (a.alreadyMigrated) {
-    res.result = 'NOOP';
-    res.notes.unshift('buildSharedGen1 already exists in ' + CONFIG);
-    return res;
+    // migrated before the local-role fix: role: 'remote' → sviva === 'local' ? 'standalone' : 'remote'
+    const upgrade = a.buildCalls.length === 1 && localRoleUpgrade(tsm, a.buildCalls[0]);
+    if (!upgrade) {
+      res.result = 'NOOP';
+      res.notes.unshift('buildSharedGen1 already exists in ' + CONFIG);
+      if (a.buildCalls.length === 1 && remoteLiteral(tsm, a.buildCalls[0]) && !findSviva(tsm, a.buildCalls[0])) res.notes.push(NO_SVIVA_NOTE);
+      return res;
+    }
+    res.role = 'remote';
+    const out = applyEdits(text, [upgrade.edit]);
+    res.changes.push({ file: CONFIG, line: upgrade.line, rule: 'WEBPACK.ROLE_LOCAL', confidence: 'auto', detail: "role: 'remote' → role: " + upgrade.text + ' (local run brings its own React 18)' });
+    if (opts.dryRun) { res.validation = { ran: false, reason: 'dry-run' }; return res; }
+    return writeAndValidate(out, null);
   }
 
   // role
@@ -344,7 +387,8 @@ function run(argv, overrides) {
   }
 
   // 3. shared
-  const call = 'buildSharedGen1({ ' + (pkgName === 'pkg' ? 'pkg' : 'pkg: ' + pkgName) + ", require, role: '" + role + "' })";
+  const call = 'buildSharedGen1({ ' + (pkgName === 'pkg' ? 'pkg' : 'pkg: ' + pkgName) + ', require, role: ' + roleExpr(role, a.sviva) + ' })';
+  if (role === 'remote' && !a.sviva) res.notes.push(NO_SVIVA_NOTE);
   if (a.sharedProp) {
     const p = a.sharedProp;
     const indent = lineIndent(text, p.getStart());
@@ -375,7 +419,7 @@ function run(argv, overrides) {
     res.changes = [];
     blocked(CONFIG + ':' + text.slice(0, err.pos).split('\n').length + ' – ' + SCRIPT +
       ' produced two overlapping edits at the same place (a bug in the script). The file was not changed – paste the code manually');
-    res.blockers[res.blockers.length - 1].code = pasteCode(role, q);
+    res.blockers[res.blockers.length - 1].code = pasteCode(role, q, a.sviva);
     return res;
   }
   // sanity: still parses
@@ -383,29 +427,55 @@ function run(argv, overrides) {
   const diags = check.compilerNode.parseDiagnostics || [];
   if (diags.length) {
     res.changes = [];
-    return review('The conversion produced invalid code – the file was not changed. Paste manually', pasteCode(role, q));
+    return review('The conversion produced invalid code – the file was not changed. Paste manually', pasteCode(role, q, a.sviva));
   }
 
   if (opts.dryRun) {
     res.validation = { ran: false, reason: 'dry-run' };
     return res;
   }
-  try { deps.fs.writeFileSync(full, bom + out, 'utf8'); } catch (err) { return blocked('Cannot write ' + CONFIG + ': ' + err.message); }
+  return writeAndValidate(out, pasteCode(role, q, a.sviva));
 
-  // ---- validation (only if already installed; in run.js it runs as the webpack-validate step after install) ----
-  res.validation = validate(deps);
-  if (!res.validation.ran) {
-    res.notes.push(res.validation.reason + ' – validation was skipped. After npm install: node ' + __filename.split(path.sep).join('/') + ' --validate-only (in run.js: the webpack-validate step)');
+  function writeAndValidate(content, paste) {
+    try { deps.fs.writeFileSync(full, bom + content, 'utf8'); } catch (err) { return blocked('Cannot write ' + CONFIG + ': ' + err.message); }
+
+    // ---- validation (only if already installed; in run.js it runs as the webpack-validate step after install) ----
+    res.validation = validate(deps);
+    if (!res.validation.ran) {
+      res.notes.push(res.validation.reason + ' – validation was skipped. After npm install: node ' + __filename.split(path.sep).join('/') + ' --validate-only (in run.js: the webpack-validate step)');
+      return res;
+    }
+    if (!res.validation.ok) {
+      try { deps.fs.writeFileSync(full, raw, 'utf8'); } catch (_) { /* reported below */ }
+      res.changes = [];
+      review('Validation failed (' + res.validation.error + ') – ' + CONFIG + ' was restored to its original state', paste || undefined);
+      res.manual[res.manual.length - 1].output = res.validation.output;
+      return res;
+    }
     return res;
   }
-  if (!res.validation.ok) {
-    try { deps.fs.writeFileSync(full, raw, 'utf8'); } catch (_) { /* reported below */ }
-    res.changes = [];
-    review('Validation failed (' + res.validation.error + ') – ' + CONFIG + ' was restored to its original state', pasteCode(role, q));
-    res.manual[res.manual.length - 1].output = res.validation.output;
-    return res;
-  }
-  return res;
+}
+
+const NO_SVIVA_NOTE = "role 'remote' is fixed and no sviva parameter was found – a local run (webpack serve) gets React from the share scope, " +
+  "not from node_modules. To run locally on React 18 use: role: sviva === 'local' ? 'standalone' : 'remote'";
+
+// buildSharedGen1({ …, role: 'remote' }) → the role property, or null
+function remoteLiteral(tsm, call) {
+  const { Node } = tsm;
+  const arg = call.getArguments()[0];
+  if (!arg || !Node.isObjectLiteralExpression(arg)) return null;
+  const p = arg.getProperty('role');
+  if (!p || !Node.isPropertyAssignment(p)) return null;
+  const v = p.getInitializer();
+  return v && Node.isStringLiteral(v) && v.getLiteralText() === 'remote' ? v : null;
+}
+
+function localRoleUpgrade(tsm, call) {
+  const lit = remoteLiteral(tsm, call);
+  const sviva = lit && findSviva(tsm, call);
+  if (!sviva) return null;
+  const text = roleExpr('remote', sviva);
+  return { edit: { start: lit.getStart(), end: lit.getEnd(), text: text }, text: text, line: lit.getStartLineNumber() };
 }
 
 function formatText(res) {

@@ -21,6 +21,7 @@ const STAGES = [
   ['codemod-react18', 'React 18'],
   ['codemod-anti-patterns', 'async useEffect'],
   ['codemod-makestyles', 'makeStyles → sx'],
+  ['codemod-pickers', 'date pickers v5 → v9'],
   ['use-shared-state', 'useSharedState'],
   ['webpack-shared', 'webpack federation'],
   ['install', 'install'],
@@ -29,7 +30,7 @@ const STAGE_LABEL = new Map(STAGES);
 // scripts whose "changes" are bookkeeping, not source edits
 const NON_SOURCE = new Set(['preflight', 'scan', 'branch', 'commit', 'build', 'verify-runtime', 'report']);
 const EXPECTED_INPUTS = ['preflight', 'scan', 'branch', 'package-json', 'codemod-mui-imports', 'codemod-react18',
-  'codemod-anti-patterns', 'codemod-makestyles', 'use-shared-state', 'webpack-shared', 'install', 'build', 'verify-runtime'];
+  'codemod-anti-patterns', 'codemod-makestyles', 'codemod-pickers', 'use-shared-state', 'webpack-shared', 'install', 'build', 'verify-runtime'];
 
 function parseArgs(argv) {
   const opts = { dryRun: false, json: false, errors: [] };
@@ -111,7 +112,7 @@ const STUB_PROVED = [
   ['build', 'Build'],
   ['verify-runtime', 'Runtime check'],
 ];
-const CODEMODS = ['codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'codemod-makestyles', 'use-shared-state', 'webpack-shared'];
+const CODEMODS = ['codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'codemod-makestyles', 'codemod-pickers', 'use-shared-state', 'webpack-shared'];
 const RANK = { BLOCKED: 3, REVIEW: 2, OK: 1, NOOP: 0 };
 
 function stubModel(stub, latestPerScript, lastBuild) {
@@ -211,7 +212,7 @@ function buildModel(inputs, git, pkg, now, stub) {
   }
   if (inv && (inv.react18Only || []).length) checklist.push({ text: 'React 18-only API usages – verify behavior under a Host with React 17', reason: 'react18Only' });
   if (changes.some((c) => c.stage === 'codemod-anti-patterns')) checklist.push({ text: 'Data loading on screens where an async useEffect was converted (including StrictMode)', reason: 'anti-patterns' });
-  if (inv && (inv.pickers || []).length) checklist.push({ text: 'Date pickers – the @mui/x-date-pickers API is different', reason: 'pickers' });
+  if (inv && (inv.pickers || []).length) checklist.push({ text: 'Date pickers – the MIGRATION-TODO items in migration-report.json are handled, and every picker was checked visually in 4 states (empty, focused, with a date, with an error): date, label and error text aligned right, not over the icon, the outline notch under the label', reason: 'pickers' });
   if (git.stashCount) checklist.push({ text: 'git stash has ' + git.stashCount + ' entries – check whether anything needs to be restored (git stash list)', reason: 'stash' });
   if (manual.length) checklist.push({ text: 'All ' + manual.length + ' items in the "Needs manual handling" section have been handled', reason: 'manual' });
   if (lastBuild && lastBuild.result !== 'OK') checklist.push({ text: 'The build passes (npm run build:dev)', reason: 'build' });

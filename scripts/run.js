@@ -31,6 +31,8 @@ const STEPS = [
   { id: 'codemod-anti-patterns' },
   { id: 'commit-mechanical', script: 'commit', args: ['--step', 'mechanical'] },
   { id: 'codemod-makestyles' },
+  // @mui/x-date-pickers v5 → v9: official codemods, the skill's rules, RTL alignment of the field (migration-report.json)
+  { id: 'codemod-pickers' },
   { id: 'use-shared-state' },
   { id: 'webpack-shared' },
   { id: 'commit-infra', script: 'commit', args: ['--step', 'infra'] },
@@ -46,7 +48,7 @@ const STEP_IDS = STEPS.map((s) => s.id);
 // --answer keys that are passed to a step as a flag (the answer is kept in state.answers)
 const ANSWER_FLAGS = { 'webpack.role': { step: 'webpack-shared', flag: '--role' } };
 // files in the service that the pipeline itself leaves uncommitted – they do not make the tree "dirty" for an automatic re-run
-const OWN_FILES = /^(\.migration\/|MIGRATION-V2-REPORT\.md$)/;
+const OWN_FILES = /^(\.migration\/|MIGRATION-V2-REPORT\.md$|migration-report\.json$)/;
 
 // Fingerprint of the skill's code and reference data. A finished run records it; when it changes (a new version was
 // copied in), --auto runs again from the first step that had open items, instead of "already complete"

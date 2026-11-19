@@ -80,7 +80,7 @@ test('each step has its own description', () => {
   const r = makeRepo();
   write(r.work, 'webpack.config.js', 'module.exports = {};\n');
   assert.strictEqual(run(['--step', 'infra'], deps(r.work)).message,
-    'migration-v2(infra): styles, useSharedState, webpack federation (1 files)');
+    'migration-v2(infra): styles, date pickers, useSharedState, webpack federation (1 files)');
   write(r.work, 'src/fix.js', 'x\n');
   assert.strictEqual(run(['--step=build-fixes'], deps(r.work)).message,
     'migration-v2(build-fixes): build error fixes (1 files)');

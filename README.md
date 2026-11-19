@@ -76,7 +76,7 @@
 
 ## מה קורה בתהליך
 
-הסקיל מבוסס על מתזמר (`scripts/run.js`) שמריץ **18 שלבים** לפי הסדר. כל שלב הוא סקריפט דטרמיניסטי
+הסקיל מבוסס על מתזמר (`scripts/run.js`) שמריץ **19 שלבים** לפי הסדר. כל שלב הוא סקריפט דטרמיניסטי
 (codemods מבוססי AST עם `ts-morph`), כך שרוב העבודה לא נעשית ע"י המודל אלא ע"י קוד שנבדק.
 Claude אחראי על ההרצה, על נקודות ההחלטה ועל תיקון שגיאות ה-build שהקודמודים לא סגרו.
 
@@ -105,20 +105,21 @@ Claude אחראי על ההרצה, על נקודות ההחלטה ועל תיק�
 | # | שלב | מה קורה |
 |---|---|---|
 | 9 | `codemod-makestyles` | `makeStyles` מוחלף באובייקטי סגנון דרך `sx` / `slotProps` של MUI v7 |
-| 10 | `use-shared-state` | מתקין את הגרסה העדכנית של `useSharedState` מתוך `assets/` (עם אימות sha256) ובודק את מקומות השימוש בו |
-| 11 | `webpack-shared` | מחליף את הגדרת ה-`shared` ב-`webpack.config.js` בקריאה ל-`buildSharedGen1({ pkg, require, role })` |
-| 12 | `commit-infra` | commit לשלבים 9–11 |
+| 10 | `codemod-pickers` | `@mui/x-date-pickers` v5 → v9: הקודמודים הרשמיים (`@mui/x-codemod` v6–v9), אחריהם כללי הסקיל (`slots` / `slotProps`, `renderInput` → `slotProps.textField`, `moment()` סביב ערכים, action bar), ויישור RTL של השדה (`pickersRtlSxSmall` / `pickersRtlSxMedium`) בלי ThemeProvider. מה שלא הוסב בוודאות מסומן `MIGRATION-TODO`. דוח: `migration-report.json` (לא נכנס ל-commit). קונפיגורציה: `pickers-migration.config.json` בשורש השירות (אופציונלי) |
+| 11 | `use-shared-state` | מתקין את הגרסה העדכנית של `useSharedState` מתוך `assets/` (עם אימות sha256) ובודק את מקומות השימוש בו |
+| 12 | `webpack-shared` | מחליף את הגדרת ה-`shared` ב-`webpack.config.js` בקריאה ל-`buildSharedGen1({ pkg, require, role })` |
+| 13 | `commit-infra` | commit לשלבים 9–12 |
 
 ### שלב ד' – התקנה, build ואימות → commit שלישי
 
 | # | שלב | מה קורה |
 |---|---|---|
-| 13 | `install` | מוחק `node_modules` ו-`package-lock.json` ומריץ `npm install` נקי. **אף פעם לא** `--legacy-peer-deps` / `--force` |
-| 14 | `webpack-validate` | טוען את `webpack.config.js` ומוודא ש-`buildSharedGen1` עובד מול החבילה המותקנת |
-| 15 | `build` | `npm run build:dev`. אם נכשל – **סבב תיקון**: Claude מתקן לפי [reference/known-errors.md](reference/known-errors.md) ומריץ שוב. עד 5 סבבים, ועצירה אם מספר השגיאות לא יורד בשני סבבים רצופים |
-| 16 | `verify-runtime` | מרים את שרת הפיתוח (בלי דפדפן) ובודק ש-`remoteEntry.js` והדף הראשי נטענים |
-| 17 | `commit-build-fixes` | commit לתיקוני ה-build |
-| 18 | `report` | כותב את `MIGRATION-V2-REPORT.md` (לא נכנס ל-commit) |
+| 14 | `install` | מוחק `node_modules` ו-`package-lock.json` ומריץ `npm install` נקי. **אף פעם לא** `--legacy-peer-deps` / `--force` |
+| 15 | `webpack-validate` | טוען את `webpack.config.js` ומוודא ש-`buildSharedGen1` עובד מול החבילה המותקנת |
+| 16 | `build` | `npm run build:dev`. אם נכשל – **סבב תיקון**: Claude מתקן לפי [reference/known-errors.md](reference/known-errors.md) ומריץ שוב. עד 5 סבבים, ועצירה אם מספר השגיאות לא יורד בשני סבבים רצופים |
+| 17 | `verify-runtime` | מרים את שרת הפיתוח (בלי דפדפן) ובודק ש-`remoteEntry.js` והדף הראשי נטענים |
+| 18 | `commit-build-fixes` | commit לתיקוני ה-build |
+| 19 | `report` | כותב את `MIGRATION-V2-REPORT.md` (לא נכנס ל-commit) |
 
 > **למה React 18 בקוד אבל זה עדיין עובד תחת Host ישן?**
 > `buildSharedGen1` מגדיר את React ו-router כ-singleton שה-Host מספק. תחת Host ישן השירות רץ בפועל על React 17,

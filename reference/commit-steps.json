@@ -2,11 +2,11 @@
   "messagePrefix": "migration-v2",
   "steps": {
     "mechanical": "package.json, MUI imports, React 18",
-    "infra": "styles, useSharedState, webpack federation",
+    "infra": "styles, date pickers, useSharedState, webpack federation",
     "build-fixes": "build error fixes"
   },
   "protectedBranches": ["main", "master"],
   "defaultTarget": "digital_V2",
   "defaultSource": null,
-  "excludePaths": [".migration", "MIGRATION-V2-REPORT.md"]
+  "excludePaths": [".migration", "MIGRATION-V2-REPORT.md", "migration-report.json"]
 }

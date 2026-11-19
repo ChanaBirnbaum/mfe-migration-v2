@@ -11,7 +11,7 @@ const stubMode = require('./stub-mode');
 const SCRIPT = 'package-json';
 const VERSIONS_FILE = path.join(__dirname, '..', 'reference', 'versions.json');
 const SCAN_RULES_FILE = path.join(__dirname, '..', 'reference', 'scan-rules.json');
-const PICKERS_REASON = 'Moving from pickers v3/v5 to x-date-pickers v9 — extensive API changes, needs manual review';
+const PICKERS_REASON = 'Moving from pickers v3/v5 to x-date-pickers v9 — extensive API changes: the codemod-pickers step migrates them and marks the rest with MIGRATION-TODO (migration-report.json)';
 const DEFAULT_INVENTORY = '.migration/inventory.json';
 const NPM_TIMEOUT_MS = 15000;
 
@@ -343,6 +343,16 @@ function run(argv, overrides) {
       if (ed.get(block, name) === undefined) return;
       const a = ed.set(block, name, versions.types[name]);
       if (a) change('PKG.UPDATE', block + ': ' + name + ' ' + versions.types[name]);
+    });
+  });
+
+  // 6b. updateIfDeclared (@ips/react-attachments) – exact version, only where already declared; never added
+  dataKeys(versions.updateIfDeclared).forEach((name) => {
+    const range = versions.updateIfDeclared[name];
+    [D, DEV].forEach((block) => {
+      if (ed.get(block, name) === undefined) return;
+      const a = ed.set(block, name, range);
+      if (a) change('PKG.UPDATE', (block === DEV ? 'devDependencies: ' : '') + name + ' ' + range, name);
     });
   });
 

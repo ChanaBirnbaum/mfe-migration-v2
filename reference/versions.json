@@ -19,6 +19,10 @@
     "react-router-dom": "routerImports",
     "@mui/x-date-pickers": "pickers"
   },
+  "updateIfDeclared": {
+    "_comment": "Updated to this exact version wherever already declared (dependencies or devDependencies). Never added, never moved between blocks.",
+    "@ips/react-attachments": "2.0.0"
+  },
   "conditionalDependencies": {
     "@mui/icons-material": "^7.3.0"
   },

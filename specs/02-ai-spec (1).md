@@ -153,6 +153,8 @@ RESULT: OK | PAUSE | PAUSE_FOR_FIX | FAILED | NOOP
 
 `react-router-dom`, ‏`@mui/x-date-pickers` ו-`@mui/icons-material` נוספות רק אם כבר הוצהרו או שה-scan מצא שימוש בהן (`usageGated` / `conditionalDependencies` ב-`versions.json`).
 
+`@ips/react-attachments` – אם כבר מוצהרת (ב-`dependencies` או ב-`devDependencies`), מתעדכנת לגרסה המדויקת `2.0.0` באותו בלוק. לא מוצהרת → לא נוספת (`updateIfDeclared` ב-`versions.json`).
+
 ### webpack.config.js – המבנה בפועל
 
 ```js

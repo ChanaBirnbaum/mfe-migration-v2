@@ -74,6 +74,15 @@
 ## R1.1 – התוכן המדויק
 `RTL_SX_SOURCE` ב-`codemod-pickers.js` (מיוצא לבדיקות). ‏shared כותב אותו כמו שהוא, inline מוריד את `export`.
 
+הקבועים כוללים גם את עיצוב השדה (פונט, border-radius, צבעי טקסט / label / מסגרת), כי בגרסה 9 העיצוב של
+`TextField` / `OutlinedInput`, ושל `IpsTextField` שהגיע דרך `renderInput`, כבר לא מגיע לשדה:
+- `pickersFieldDesign` – הערכים. כדי לשנות את העיצוב בכל השירות, מעדכנים אותם כאן.
+- `pickersFieldSx(design)` – בונה את ה-sx מהערכים. כדי לשנות שדה אחד:
+  `sx: [pickersRtlSxSmall, pickersFieldSx({ ...pickersFieldDesign, borderRadius: '4px' })]`.
+- hover, שגיאה ו-disabled של המסגרת ושל ה-label נשארים כמו ב-MUI.
+
+ב-shared הקובץ נכתב רק אם הוא לא קיים. בשירות שכבר הוסב, צריך למחוק את הקובץ ולהריץ שוב, או לעדכן אותו ידנית.
+
 ## דוח – migration-report.json
 בשורש השירות, לא נכנס ל-commit (`excludePaths` ב-`reference/commit-steps.json`):
 ```json

@@ -1339,9 +1339,29 @@ function pickerSize(el) {
   return 'medium';
 }
 
+// v9: size on the picker does nothing, and the field's TextField does not read the size of an outer FormControl.
+// Only slotProps.textField.size sets the field height → move / copy it there; a size left on the picker is removed.
+function syncTextFieldSize(doc, get) {
+  const tf = slotPropsObj(get(), ['textField']);
+  const hasTf = !!(tf && getProp(tf, 'size'));
+  const a = getAttr(get(), 'size');
+  if (a) {
+    if (hasTf) return doc.edit([removalRange(doc.text, a.getStart(), a.getEnd())], 'R1');
+    return moveAttrToSlot(doc, get, 'size', 'R1', ['textField'], ['size']);
+  }
+  if (hasTf) return;
+  const fc = nearestTag(get(), 'FormControl');
+  const fa = fc && getAttr(fc.getOpeningElement(), 'size');
+  const v = fa && attrValue(fa);
+  if (!v || stringValue(v) === 'medium') return; // medium is the default
+  const plan = slotPlan(doc, get(), ['textField'], [{ key: 'size', value: v.getText() }]);
+  if (plan.edits) doc.edit(plan.edits, 'R1');
+}
+
 function ruleR1(doc) {
   const used = new Set();
   doc.forEachPicker((get) => {
+    syncTextFieldSize(doc, get);
     const size = pickerSize(get());
     if (size === 'dynamic') return doc.todo(get(), 'R1', REASON.r1Dynamic);
     const name = size === 'small' ? 'pickersRtlSxSmall' : 'pickersRtlSxMedium';

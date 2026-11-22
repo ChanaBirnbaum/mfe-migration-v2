@@ -118,6 +118,7 @@ const IpsDatePicker = ({ label, value, onChange, error, helperText, disabled, mi
                                 formHelperText: { sx: { color: '#d32f2f', textAlign: 'right', marginRight: '2%' } },
                             },
                             helperText: helperText,
+                            size: "small",
                             sx: pickersRtlSxSmall,
                         },
                     }}

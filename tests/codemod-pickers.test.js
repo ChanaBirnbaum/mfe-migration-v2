@@ -170,7 +170,7 @@ test('R1.1 auto with more than one picker file → shared file + relative import
     '',
   ].join('\n'));
   assert.match(readIn(root, 'src/b/deep/B.jsx'), /import \{ pickersRtlSxSmall \} from '\.\.\/\.\.\/utils\/pickersRtlSx';\n/);
-  assert.match(readIn(root, 'src/b/deep/B.jsx'), /slotProps=\{\{ textField: \{ sx: \[pickersRtlSxSmall, fieldSx\] \} \}\}/);
+  assert.match(readIn(root, 'src/b/deep/B.jsx'), /slotProps=\{\{ textField: \{ sx: \[pickersRtlSxSmall, fieldSx\], size: "small" \} \}\}/);
   const r = report(root);
   assert.strictEqual(r.config.rtlSxPlacementResolved, 'shared');
   assert.ok(res.filesChanged.indexOf('src/utils/pickersRtlSx.js') !== -1);
@@ -214,6 +214,27 @@ test('R1: a JSX spread on the picker → new slotProps goes before the spread + 
   const root = repo({ 'src/A.jsx': "import { DatePicker } from '@mui/x-date-pickers';\n\nexport const A = (props) => (\n    <DatePicker\n        {...props}\n    />\n);\n" });
   run([], { cwd: root, runOfficial: okRunner() });
   assert.match(readIn(root, 'src/A.jsx'), /<DatePicker\n {8}slotProps=\{\{\n {12}textField: \{ sx: pickersRtlSxMedium \},\n {8}\}\}\n {8}\/\/ MIGRATION-TODO: D1 spread may contain old prop names\n {8}\{\.\.\.props\}\n/);
+});
+
+test('R1 size: size on the picker → slotProps.textField.size, removed from the picker; second run NOOP', () => {
+  const root = repo({ 'src/A.jsx': "import { DatePicker } from '@mui/x-date-pickers';\n\nexport const A = ({ s }) => <DatePicker size={s} />;\n" });
+  run([], { cwd: root, runOfficial: okRunner() });
+  const out = readIn(root, 'src/A.jsx');
+  assert.match(out, /<DatePicker slotProps=\{\{ textField: \{ size: s \} \}\} \/>/);
+  assert.match(out, /MIGRATION-TODO: R1 dynamic size/);
+  assert.strictEqual(run([], { cwd: root, runOfficial: okRunner() }).result, 'NOOP');
+});
+
+test('R1 size: slotProps.textField.size already set → the dead size on the picker is removed', () => {
+  const root = repo({ 'src/A.jsx': "import { DatePicker } from '@mui/x-date-pickers';\n\nexport const A = () => <DatePicker size=\"medium\" slotProps={{ textField: { size: 'small' } }} />;\n" });
+  run([], { cwd: root, runOfficial: okRunner() });
+  assert.match(readIn(root, 'src/A.jsx'), /<DatePicker slotProps=\{\{ textField: \{ size: 'small', sx: pickersRtlSxSmall \} \}\} \/>/);
+});
+
+test('R1 size: FormControl size="medium" (the default) → no size added', () => {
+  const root = repo({ 'src/A.jsx': "import { FormControl } from '@mui/material';\nimport { DatePicker } from '@mui/x-date-pickers';\n\nexport const A = () => <FormControl size=\"medium\"><DatePicker /></FormControl>;\n" });
+  run([], { cwd: root, runOfficial: okRunner() });
+  assert.match(readIn(root, 'src/A.jsx'), /<FormControl size="medium"><DatePicker slotProps=\{\{ textField: \{ sx: pickersRtlSxMedium \} \}\} \/><\/FormControl>/);
 });
 
 // ---- output of the official codemods (seen in a real run) ----

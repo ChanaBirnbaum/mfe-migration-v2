@@ -105,7 +105,7 @@ Claude אחראי על ההרצה, על נקודות ההחלטה ועל תיק�
 | # | שלב | מה קורה |
 |---|---|---|
 | 9 | `codemod-makestyles` | `makeStyles` מוחלף באובייקטי סגנון דרך `sx` / `slotProps` של MUI v7 |
-| 10 | `codemod-pickers` | `@mui/x-date-pickers` v5 → v9: הקודמודים הרשמיים (`@mui/x-codemod` v6–v9), אחריהם כללי הסקיל (`slots` / `slotProps`, `renderInput` → `slotProps.textField`, `moment()` סביב ערכים, action bar), ויישור RTL של השדה (`pickersRtlSxSmall` / `pickersRtlSxMedium`) בלי ThemeProvider. מה שלא הוסב בוודאות מסומן `MIGRATION-TODO`. דוח: `migration-report.json` (לא נכנס ל-commit). קונפיגורציה: `pickers-migration.config.json` בשורש השירות (אופציונלי) |
+| 10 | `codemod-pickers` | `@mui/x-date-pickers` v5 → v9: הקודמודים הרשמיים (`@mui/x-codemod` v6–v9), אחריהם כללי הסקיל (`slots` / `slotProps`, `renderInput` → `slotProps.textField`, `moment()` סביב ערכים, action bar), ויישור RTL של השדה (`pickersRtlSxSmall` / `pickersRtlSxMedium`) בלי ThemeProvider. `size` שעל ה-picker או על `FormControl` העוטף עובר ל-`slotProps.textField.size`, כדי שגובה השדה יתאים לשאר הפקדים. מה שלא הוסב בוודאות מסומן `MIGRATION-TODO`. דוח: `migration-report.json` (לא נכנס ל-commit). קונפיגורציה: `pickers-migration.config.json` בשורש השירות (אופציונלי) |
 | 11 | `use-shared-state` | מתקין את הגרסה העדכנית של `useSharedState` מתוך `assets/` (עם אימות sha256) ובודק את מקומות השימוש בו |
 | 12 | `webpack-shared` | מחליף את הגדרת ה-`shared` ב-`webpack.config.js` בקריאה ל-`buildSharedGen1({ pkg, require, role })` |
 | 13 | `commit-infra` | commit לשלבים 9–12 |

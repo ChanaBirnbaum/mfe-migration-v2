@@ -63,9 +63,8 @@ export const Start = ({ form, setForm, min }) => (
             // MIGRATION-TODO: C2 maxDate is an expression: wrap it with moment() manually
             maxDate={getMax(form)}
             onChange={(d) => setForm({ ...form, start: d?.isValid() ? d.toDate() : null })}
-            size="small"
             slotProps={{
-                textField: { sx: pickersRtlSxSmall },
+                textField: { size: "small", sx: pickersRtlSxSmall },
             }}
         />
     </LocalizationProvider>

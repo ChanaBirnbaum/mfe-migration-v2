@@ -120,6 +120,21 @@ test('@ips/react-attachments: not declared → never added', () => {
   assert.strictEqual((pkg.devDependencies || {})['@ips/react-attachments'], undefined);
 });
 
+test('@ips/maoz-attachments: declared → exact 3.0.0 in the same block; not declared → never added', () => {
+  const root = repo('{\n  "name": "x",\n  "dependencies": {\n    "@ips/maoz-attachments": "^2.1.0",\n    "react": "^17.0.2"\n  }\n}\n');
+  const res = run([], deps(root));
+  const pkg = JSON.parse(pkgOf(root));
+  assert.strictEqual(pkg.dependencies['@ips/maoz-attachments'], '3.0.0');
+  assert.ok(res.changes.some((c) => c.detail === '@ips/maoz-attachments 3.0.0' && c.confidence === 'auto'));
+  assert.strictEqual(run([], deps(root)).result, 'NOOP');
+
+  const root2 = repo(read('typical', 'before.json'));
+  run([], deps(root2));
+  const pkg2 = JSON.parse(pkgOf(root2));
+  assert.strictEqual(pkg2.dependencies['@ips/maoz-attachments'], undefined);
+  assert.strictEqual((pkg2.devDependencies || {})['@ips/maoz-attachments'], undefined);
+});
+
 test('build tools are not moved between blocks', () => {
   const root = repo(read('typical', 'before.json'));
   run([], deps(root));

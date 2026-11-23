@@ -26,6 +26,8 @@ const STEPS = [
   // approval: which branch to branch off (default: the current one). branch.target (default digital_V2) is optional
   { id: 'branch', approval: 'branch.source' },
   { id: 'package-json' },
+  // unused import bindings – still evaluated at runtime, and an import of an API that no longer exists breaks React 18 / MUI v7
+  { id: 'codemod-unused-imports' },
   { id: 'codemod-mui-imports' },
   { id: 'codemod-react18' },
   { id: 'codemod-anti-patterns' },

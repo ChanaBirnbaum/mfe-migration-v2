@@ -67,8 +67,8 @@ test('fresh run stops before branch: source (current branch) → digital_V2, ask
   const out = await go(root, [], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan', 'branch']);
   assert.deepStrictEqual(m.calls[2].args, ['--json', '--dry-run']); // probe only
-  assert.match(out, /\[ 1\/19] preflight\s+✓ OK/);
-  assert.match(out, /\[ 3\/19] branch\s+⏸ PAUSE {5}Approval needed: create digital_V2 from develop \(current branch\)/);
+  assert.match(out, /\[ 1\/20] preflight\s+✓ OK/);
+  assert.match(out, /\[ 3\/20] branch\s+⏸ PAUSE {5}Approval needed: create digital_V2 from develop \(current branch\)/);
   assert.match(out, /branch from: develop {3}→ {3}new branch: digital_V2/);
   assert.ok(out.indexOf('Next: ' + RUN_CMD + ' --resume --answer branch.source=develop') !== -1, out);
   assert.match(out, /--answer branch\.target=<name>/);
@@ -92,7 +92,7 @@ test('probe says adopt (digital_V2 exists, not created by the skill) → approva
   const root = repo();
   const m = mock({ branch: { targetMode: 'adopt', sourceBranch: null, previousBranch: 'develop', targetBranch: 'digital_V2', tag: 'migration-start-20261005-1407' } });
   const out = await go(root, [], m);
-  assert.match(out, /\[ 3\/19] branch\s+⏸ PAUSE {5}Approval needed: run the migration on the EXISTING branch digital_V2/);
+  assert.match(out, /\[ 3\/20] branch\s+⏸ PAUSE {5}Approval needed: run the migration on the EXISTING branch digital_V2/);
   assert.match(out, /⚠ Branch digital_V2 already exists and was NOT created by this skill/);
   assert.match(out, /⚠ The migration will run on top of it; steps already done manually will return NOOP/);
   assert.match(out, /⚠ Restore point: a new tag migration-start-20261005-1407 on the current tip of digital_V2/);
@@ -122,7 +122,7 @@ test('probe says NOOP (already on digital_V2) → no approval pause, branch runs
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight', 'scan', 'branch', 'branch', 'package-json']);
   assert.deepStrictEqual(m.calls[3].args, ['--json']);
   assert.doesNotMatch(out, /Approval needed/);
-  assert.match(out, /\[ 3\/19] branch\s+✓ NOOP/);
+  assert.match(out, /\[ 3\/20] branch\s+✓ NOOP/);
 });
 
 test('--answer branch.target before approval → probe and the PAUSE use the other name', async () => {
@@ -148,10 +148,10 @@ test('--resume --answer branch.source passes the source to branch and continues'
   const m = mock({ 'codemod-makestyles': { result: 'REVIEW', manual: [{ file: 'src/D.jsx', line: 4, reason: 'level C – box depends on props' }], notes: ['check visually'] } });
   const out = await go(root, ['--resume', '--answer', 'branch.source=develop'], m);
   assert.deepStrictEqual(m.calls[0], { id: 'branch', args: ['--json', '--source', 'develop'] });
-  assert.deepStrictEqual(m.calls.map((c) => c.id), ['branch', 'package-json', 'codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'commit-mechanical', 'codemod-makestyles']);
-  assert.deepStrictEqual(m.calls[5].args, ['--json', '--step', 'mechanical']);
+  assert.deepStrictEqual(m.calls.map((c) => c.id), ['branch', 'package-json', 'codemod-unused-imports', 'codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'commit-mechanical', 'codemod-makestyles']);
+  assert.deepStrictEqual(m.calls[6].args, ['--json', '--step', 'mechanical']);
   // REVIEW prints the full content and pauses; the step itself is done
-  assert.match(out, /\[ 9\/19] codemod-makestyles\s+⏸ REVIEW/);
+  assert.match(out, /\[10\/20] codemod-makestyles\s+⏸ REVIEW/);
   assert.match(out, /1\. src\/D\.jsx:4 – level C – box depends on props/);
   assert.match(out, /ℹ check visually/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
@@ -174,7 +174,7 @@ test('BLOCKED → PAUSE with blockers; --resume reruns the same step', async () 
   const root = repo();
   const m1 = mock({ install: { result: 'BLOCKED', blockers: [{ message: 'ERESOLVE – conflict', tree: 'peer react@"^17" from x' }] } });
   const out = await go(root, ['--yes'], m1);
-  assert.match(out, /\[14\/19] install\s+⛔ BLOCKED/);
+  assert.match(out, /\[15\/20] install\s+⛔ BLOCKED/);
   assert.match(out, /⛔ ERESOLVE – conflict\n {5}\| peer react@"\^17" from x/);
   assert.strictEqual(last(out), 'RESULT: PAUSE');
   assert.strictEqual(state(root).current, 'install');
@@ -190,7 +190,7 @@ test('webpack-validate REVIEW → PAUSE before build, full error output printed;
   const output = 'Error: FederationConfigError: role\n    at buildSharedGen1 (index.js:3:9)\n    at Object.<anonymous> (webpack.config.js:12:5)';
   const m1 = mock({ 'webpack-validate': { result: 'REVIEW', manual: [{ file: 'webpack.config.js', line: null, reason: 'validation failed', output: output }] } });
   const out = await go(root, ['--yes'], m1);
-  assert.match(out, /\[15\/19] webpack-validate\s+⏸ REVIEW/);
+  assert.match(out, /\[16\/20] webpack-validate\s+⏸ REVIEW/);
   assert.match(out, / {7}\| {5}at Object\.<anonymous> \(webpack\.config\.js:12:5\)/);
   assert.ok(m1.calls.every((c) => c.id !== 'build'));
   assert.strictEqual(last(out), 'RESULT: PAUSE');
@@ -203,7 +203,7 @@ test('webpack-validate REVIEW → PAUSE before build, full error output printed;
 test('script crash (exit != 0) → FAILED with the stderr tail', async () => {
   const root = repo();
   const out = await go(root, ['--yes'], mock({ scan: { crash: true } }));
-  assert.match(out, /\[ 2\/19] scan\s+💥 FAILED {4}exit 1/);
+  assert.match(out, /\[ 2\/20] scan\s+💥 FAILED {4}exit 1/);
   assert.match(out, /\| TypeError: boom/);
   assert.strictEqual(last(out), 'RESULT: FAILED');
   assert.strictEqual(state(root).current, 'scan');
@@ -222,7 +222,7 @@ test('build failure → PAUSE_FOR_FIX with diagnostics; resume reruns build and 
   let out = '';
   const m = mock({ build: failing(5) });
   out = await go(root, ['--yes', '--from', 'build'], m);
-  assert.match(out, /\[16\/19] build\s+🔧 PAUSE_FOR_FIX 5 errors \| round 1\/5/);
+  assert.match(out, /\[17\/20] build\s+🔧 PAUSE_FOR_FIX 5 errors \| round 1\/5/);
   assert.match(out, /⛔ \[tsc TS2322\] src\/A\.tsx:1:1 – bad 0/);
   assert.strictEqual(last(out), 'RESULT: PAUSE_FOR_FIX');
   out = await go(root, ['--resume'], mock({ build: failing(3) }));
@@ -266,12 +266,12 @@ test('build passes → pipeline continues to the end → OK, state finished', as
   assert.deepStrictEqual(s.buildWindow.history, []);
 });
 
-test('full happy run with --yes runs all 19 steps in order', async () => {
+test('full happy run with --yes runs all 20 steps in order', async () => {
   const root = repo();
   const m = mock({});
   const out = await go(root, ['--yes'], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ALL);
-  assert.match(out, /\[19\/19] report\s+✓ OK/);
+  assert.match(out, /\[20\/20] report\s+✓ OK/);
   // the edit runs before install, its validation right after install and before build
   const ids = m.calls.map((c) => c.id);
   assert.ok(ids.indexOf('webpack-shared') < ids.indexOf('install'));
@@ -388,8 +388,8 @@ test('--dry-run text: blockers and manual items are printed under their step, ru
   const m = mock(DRY_PLAN);
   const out = await go(repo(), ['--dry-run'], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ALL);
-  assert.match(out, /\[ 2\/19] scan\s+⛔ BLOCKED.*\n {2}⛔ deny-list: react-beautiful-dnd\n/);
-  assert.match(out, /\[ 9\/19] codemod-makestyles\s+⏸ REVIEW.*\n {2}✋ src\/D\.jsx:4 – level C\n/);
+  assert.match(out, /\[ 2\/20] scan\s+⛔ BLOCKED.*\n {2}⛔ deny-list: react-beautiful-dnd\n/);
+  assert.match(out, /\[10\/20] codemod-makestyles\s+⏸ REVIEW.*\n {2}✋ src\/D\.jsx:4 – level C\n/);
   assert.strictEqual(last(out), 'RESULT: BLOCKED');
 });
 
@@ -442,7 +442,7 @@ test('real child process: --only scan runs scripts/scan.js and stores its result
   fs.writeFileSync(path.join(root, 'src', 'App.jsx'), "import { Button } from '@material-ui/core';\nexport default () => <Button />;\n");
   let out = '';
   await main(['--only', 'scan'], { cwd: root }, { stdout: (s) => { out += s; }, stderr: () => {} });
-  assert.match(out, /\[ 2\/19] scan\s+✓ OK/);
+  assert.match(out, /\[ 2\/20] scan\s+✓ OK/);
   const saved = JSON.parse(fs.readFileSync(path.join(root, '.migration', 'scan.json'), 'utf8'));
   assert.strictEqual(saved.inventory.muiFiles[0].file, 'src/App.jsx');
   assert.ok(fs.existsSync(path.join(root, '.migration', 'inventory.json')));
@@ -460,7 +460,7 @@ test('stub candidates → PAUSE stub-mode before scan: which package, which regi
   const m = mock({ preflight: PREFLIGHT_STUB });
   const out = await go(root, [], m);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['preflight']);
-  assert.match(out, /\[ 2\/19] scan\s+⏸ PAUSE {5}Approval needed: continue with a local stub for @ips\/mfe-shared-deps/);
+  assert.match(out, /\[ 2\/20] scan\s+⏸ PAUSE {5}Approval needed: continue with a local stub for @ips\/mfe-shared-deps/);
   assert.match(out, /⚠ Internal package\(s\) not found in https:\/\/registry\.npmjs\.org\/: @ips\/mfe-shared-deps/);
   assert.match(out, /continue with a local test stub instead: test-fixtures\/ips-mfe-shared-deps/);
   assert.match(out, /validates the pipeline mechanics only – NOT the shared configuration against the real package/);
@@ -486,7 +486,7 @@ test('--resume --answer stub.mode=yes → saved in state.stubMode, every step ge
   assert.match(out, /⚠ STUB MODE approved/);
   assert.deepStrictEqual(m.calls.map((c) => c.id), ['scan', 'branch']);
   m.envs.forEach((e) => assert.deepStrictEqual(e.env, { MFE_MIGRATION_STUB: STUB_PKG }, e.id));
-  assert.match(out, /\[ 2\/19] scan\s+✓ OK.*\n {3}⚠ STUB MODE – @ips\/mfe-shared-deps is a local test stub/);
+  assert.match(out, /\[ 2\/20] scan\s+✓ OK.*\n {3}⚠ STUB MODE – @ips\/mfe-shared-deps is a local test stub/);
   const s = state(root);
   assert.strictEqual(s.stubMode.approved, true);
   assert.deepStrictEqual(s.stubMode.packages, [STUB_PKG]);

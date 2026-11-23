@@ -23,21 +23,22 @@
 | 2 | scan | `scan.js` | מלאי מלא של השירות. deny-list → BLOCKED, ‏API של React 18 / router חדש → REVIEW | `--out <נתיב>` | `.migration/inventory.json` |
 | 3 | branch | `branch.js` | יוצר את בראנץ' היעד `digital_V2` מבראנץ' המקור (ברירת מחדל: הבראנץ' הנוכחי) ומתייג `migration-start-<YYYYMMDD-HHmm>`. היעד לא קיים → OK; קיים ו-HEAD עליו → NOOP (תג חסר נוצר); קיים ו-HEAD במקום אחר → checkout ו-OK: עם תג = המשך הסבה קיימת, בלי תג = הבראנץ' לא נוצר ע"י הסקיל, תג נקודת שחזור על הקצה שלו (מוצג באישור). עץ לא נקי → BLOCKED בכל המצבים. אין origin / אין upstream → דילוג + note. **נקודת אישור** על המקור. **אפיון: [specs/branch.md](../specs/branch.md)** | `--source <מקור>`, `--target <יעד>` (ברירות מחדל: `defaultSource` / `defaultTarget` ב-`reference/commit-steps.json`) | בראנץ' + tag |
 | 4 | package-json | `package-json.js` | גרסאות היעד, עריכה נקודתית שמשמרת פורמט. pickers → review. במצב stub: `file:<נתיב מוחלט ל-stub>` לחבילות ה-stub בלבד (חבילה שזמינה ב-registry → BLOCKED) | `--inventory <נתיב>` | `package.json` |
-| 5 | codemod-mui-imports | `codemod-mui-imports.js` | `@material-ui/*` → `@mui/*`, שינויי שמות, `palette.type` | – | `src/**` |
-| 6 | codemod-react18 | `codemod-react18.js` | `createRoot` ב-bootstrap, ‏`defaultProps`, ‏`FC` + children | – | `src/**` |
-| 7 | codemod-anti-patterns | `codemod-anti-patterns.js` | `useEffect(async …)` → `run()` (עם await) או הסרת `async` (בלי await) + cancelled guard על setState אחרי await / בתוך `.then` – רק כשיש כזה | `--no-cancel-guard` | `src/**` |
-| 8 | commit-mechanical | `commit.js --step mechanical` | commit לשלבים 4–7. **במצב stub שלושת שלבי ה-commit מדולגים** (NOOP); `package.json` עם `file:` ל-stub לעולם לא נכנס ל-commit | – | commit |
-| 9 | codemod-makestyles | `codemod-makestyles.js` | `makeStyles` → אובייקט סגנונות דרך `sx` / `slotProps` | – | `src/**` |
-| 10 | codemod-pickers | `codemod-pickers.js` | `@mui/x-date-pickers` v5 → v9. שלב 0: `pickers-migration.config.json` (או `--config`), ערך לא חוקי → BLOCKED לפני כל שינוי. שלב 1: `npx @mui/x-codemod@latest v6…v9 pickers/preset-safe` על כל קובץ שמייבא `@mui/x-date-pickers` / `@mui/lab` ("errors" > 0 → `codemod-failed`). שלב 2: הכללים D1–D9, C1–C6, R1 (יישור RTL של השדה: `pickersRtlSxSmall` / `pickersRtlSxMedium`, inline בקובץ או משותף ב-`rtlSxSharedPath`). שלב 3: סימון M2–M5 בהערות `MIGRATION-TODO`. כל TODO → פריט REVIEW. **אפיון: [specs/pickers.md](../specs/pickers.md)** | `--config <נתיב>`, `--skip-official-codemods` | `src/**`, `migration-report.json` (בלי commit) |
-| 11 | use-shared-state | `use-shared-state.js` | מתקין את `assets/useSharedState.v<גרסה>.js` (גרסה מ-`reference/versions.json`, sha256 מאומת מול `assets/useSharedState.meta.json`) ובודק את ה-call-sites | – | `src/**`, גיבוי ב-`.migration/backup/` |
-| 12 | webpack-shared | `webpack-shared.js` | `shared` → `buildSharedGen1({ pkg, require, role })` | – | `webpack.config.js` |
-| 13 | commit-infra | `commit.js --step infra` | commit לשלבים 9–12 | – | commit |
-| 14 | install | `install.js` | מוחק `node_modules` ו-`package-lock.json`, ‏`npm install` נקי. לעולם לא `--legacy-peer-deps` / `--force` | `--timeout` | `node_modules`, `package-lock.json` |
-| 15 | webpack-validate | `webpack-shared.js --validate-only` | טוען ומריץ את `webpack.config.js` – מאמת את `buildSharedGen1` אחרי ההתקנה | – | – |
-| 16 | build | `build.js` | `npm run build:dev` + פירוק השגיאות ל-diagnostics. **סבב תיקון** | `--command`, `--timeout` | `.migration/build-<n>.json` |
-| 17 | verify-runtime | `verify-runtime.js` | `webpack serve --mode development --env sviva=local` (בלי דפדפן), בודק `remoteEntry.js` ו-`/` | `--port`, `--timeout` | – |
-| 18 | commit-build-fixes | `commit.js --step build-fixes` | commit לתיקוני ה-build | – | commit |
-| 19 | report | `report.js` | `MIGRATION-V2-REPORT.md` מכל פלטי `.migration/` ומ-git. הרצת stub → סעיף ראשון `⚠️ STUB RUN` (מה הוכח, מה לא, אין commits, הרצה חוזרת) | – | `MIGRATION-V2-REPORT.md` (בלי commit) |
+| 5 | codemod-unused-imports | `codemod-unused-imports.js` | מוחק bindings של import שאינם בשימוש: שם שאינו מופיע כ-identifier בשום מקום אחר בקובץ (JSX, טיפוסים, export וכו'). declaration שהתרוקן נמחק כולו. לא נוגע ב-side-effect imports, ב-`import x = require()`, ב-`React` בקובץ עם JSX, בשמות מ-`@jsx`/`@jsxFrag` ובקבצי `.d.ts`. קובץ `.ts`/`.tsx` שנשאר בלי import ובלי export → פריט ידני. קובץ סגנון (`.css`/`.scss`/`.sass`/`.less`) עם binding שלא בשימוש → `import './x.css'` (ממשיך להיטען). declaration שלם של מודול מקומי (`./`, `../`) שנמחק → `confidence: review` (ייתכן שיש בו קוד אתחול ברמה העליונה) ופריט ב-checklist של הדוח. מודול מחבילה → auto | – | `src/**` |
+| 6 | codemod-mui-imports | `codemod-mui-imports.js` | `@material-ui/*` → `@mui/*`, שינויי שמות, `palette.type` | – | `src/**` |
+| 7 | codemod-react18 | `codemod-react18.js` | `createRoot` ב-bootstrap, ‏`defaultProps`, ‏`FC` + children | – | `src/**` |
+| 8 | codemod-anti-patterns | `codemod-anti-patterns.js` | `useEffect(async …)` → `run()` (עם await) או הסרת `async` (בלי await) + cancelled guard על setState אחרי await / בתוך `.then` – רק כשיש כזה | `--no-cancel-guard` | `src/**` |
+| 9 | commit-mechanical | `commit.js --step mechanical` | commit לשלבים 4–8. **במצב stub שלושת שלבי ה-commit מדולגים** (NOOP); `package.json` עם `file:` ל-stub לעולם לא נכנס ל-commit | – | commit |
+| 10 | codemod-makestyles | `codemod-makestyles.js` | `makeStyles` → אובייקט סגנונות דרך `sx` / `slotProps` | – | `src/**` |
+| 11 | codemod-pickers | `codemod-pickers.js` | `@mui/x-date-pickers` v5 → v9. שלב 0: `pickers-migration.config.json` (או `--config`), ערך לא חוקי → BLOCKED לפני כל שינוי. שלב 1: `npx @mui/x-codemod@latest v6…v9 pickers/preset-safe` על כל קובץ שמייבא `@mui/x-date-pickers` / `@mui/lab` ("errors" > 0 → `codemod-failed`). שלב 2: הכללים D1–D9, C1–C6, R1 (יישור RTL של השדה: `pickersRtlSxSmall` / `pickersRtlSxMedium`, inline בקובץ או משותף ב-`rtlSxSharedPath`). שלב 3: סימון M2–M5 בהערות `MIGRATION-TODO`. כל TODO → פריט REVIEW. **אפיון: [specs/pickers.md](../specs/pickers.md)** | `--config <נתיב>`, `--skip-official-codemods` | `src/**`, `migration-report.json` (בלי commit) |
+| 12 | use-shared-state | `use-shared-state.js` | מתקין את `assets/useSharedState.v<גרסה>.js` (גרסה מ-`reference/versions.json`, sha256 מאומת מול `assets/useSharedState.meta.json`) ובודק את ה-call-sites | – | `src/**`, גיבוי ב-`.migration/backup/` |
+| 13 | webpack-shared | `webpack-shared.js` | `shared` → `buildSharedGen1({ pkg, require, role })` | – | `webpack.config.js` |
+| 14 | commit-infra | `commit.js --step infra` | commit לשלבים 10–13 | – | commit |
+| 15 | install | `install.js` | מוחק `node_modules` ו-`package-lock.json`, ‏`npm install` נקי. לעולם לא `--legacy-peer-deps` / `--force` | `--timeout` | `node_modules`, `package-lock.json` |
+| 16 | webpack-validate | `webpack-shared.js --validate-only` | טוען ומריץ את `webpack.config.js` – מאמת את `buildSharedGen1` אחרי ההתקנה | – | – |
+| 17 | build | `build.js` | `npm run build:dev` + פירוק השגיאות ל-diagnostics. **סבב תיקון** | `--command`, `--timeout` | `.migration/build-<n>.json` |
+| 18 | verify-runtime | `verify-runtime.js` | `webpack serve --mode development --env sviva=local` (בלי דפדפן), בודק `remoteEntry.js` ו-`/` | `--port`, `--timeout` | – |
+| 19 | commit-build-fixes | `commit.js --step build-fixes` | commit לתיקוני ה-build | – | commit |
+| 20 | report | `report.js` | `MIGRATION-V2-REPORT.md` מכל פלטי `.migration/` ומ-git. הרצת stub → סעיף ראשון `⚠️ STUB RUN` (מה הוכח, מה לא, אין commits, הרצה חוזרת) | – | `MIGRATION-V2-REPORT.md` (בלי commit) |
 
 ## run.js
 

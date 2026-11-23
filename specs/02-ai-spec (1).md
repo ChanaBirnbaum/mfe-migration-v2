@@ -155,6 +155,8 @@ RESULT: OK | PAUSE | PAUSE_FOR_FIX | FAILED | NOOP
 
 `@ips/react-attachments` – אם כבר מוצהרת (ב-`dependencies` או ב-`devDependencies`), מתעדכנת לגרסה המדויקת `2.0.0` באותו בלוק. לא מוצהרת → לא נוספת (`updateIfDeclared` ב-`versions.json`).
 
+`@ips/maoz-attachments` – אותו כלל: אם כבר מוצהרת, מתעדכנת לגרסה המדויקת `3.0.0` באותו בלוק. לא מוצהרת → לא נוספת.
+
 ### webpack.config.js – המבנה בפועל
 
 ```js

@@ -21,7 +21,8 @@
   },
   "updateIfDeclared": {
     "_comment": "Updated to this exact version wherever already declared (dependencies or devDependencies). Never added, never moved between blocks.",
-    "@ips/react-attachments": "2.0.0"
+    "@ips/react-attachments": "2.0.0",
+    "@ips/maoz-attachments": "3.0.0"
   },
   "conditionalDependencies": {
     "@mui/icons-material": "^7.3.0"

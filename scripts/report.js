@@ -17,6 +17,7 @@ const COLLAPSE_OVER = 20;
 // order + labels of the steps that change source files
 const STAGES = [
   ['package-json', 'package.json'],
+  ['codemod-unused-imports', 'unused imports'],
   ['codemod-mui-imports', 'MUI imports'],
   ['codemod-react18', 'React 18'],
   ['codemod-anti-patterns', 'async useEffect'],
@@ -29,7 +30,7 @@ const STAGES = [
 const STAGE_LABEL = new Map(STAGES);
 // scripts whose "changes" are bookkeeping, not source edits
 const NON_SOURCE = new Set(['preflight', 'scan', 'branch', 'commit', 'build', 'verify-runtime', 'report']);
-const EXPECTED_INPUTS = ['preflight', 'scan', 'branch', 'package-json', 'codemod-mui-imports', 'codemod-react18',
+const EXPECTED_INPUTS = ['preflight', 'scan', 'branch', 'package-json', 'codemod-unused-imports', 'codemod-mui-imports', 'codemod-react18',
   'codemod-anti-patterns', 'codemod-makestyles', 'codemod-pickers', 'use-shared-state', 'webpack-shared', 'install', 'build', 'verify-runtime'];
 
 function parseArgs(argv) {
@@ -112,7 +113,7 @@ const STUB_PROVED = [
   ['build', 'Build'],
   ['verify-runtime', 'Runtime check'],
 ];
-const CODEMODS = ['codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'codemod-makestyles', 'codemod-pickers', 'use-shared-state', 'webpack-shared'];
+const CODEMODS = ['codemod-unused-imports', 'codemod-mui-imports', 'codemod-react18', 'codemod-anti-patterns', 'codemod-makestyles', 'codemod-pickers', 'use-shared-state', 'webpack-shared'];
 const RANK = { BLOCKED: 3, REVIEW: 2, OK: 1, NOOP: 0 };
 
 function stubModel(stub, latestPerScript, lastBuild) {
@@ -211,6 +212,11 @@ function buildModel(inputs, git, pkg, now, stub) {
     checklist.push({ text: 'The routes that use react-router APIs added after 6.0.2: ' + post602.map((u) => u.api + ' (' + u.file + ':' + u.line + ')').join(', '), reason: 'routerPost602' });
   }
   if (inv && (inv.react18Only || []).length) checklist.push({ text: 'React 18-only API usages – verify behavior under a Host with React 17', reason: 'react18Only' });
+  const unusedLocal = changes.filter((c) => c.stage === 'codemod-unused-imports' && c.confidence === 'review');
+  if (unusedLocal.length) {
+    checklist.push({ text: 'Unused imports of local modules were removed (' + unusedLocal.length + ') – the modules are no longer loaded from those files. ' +
+      'Check that none of them runs setup code on load (axios interceptors, i18n, registration) – in the browser: requests, translations and console', reason: 'unused-imports' });
+  }
   if (changes.some((c) => c.stage === 'codemod-anti-patterns')) checklist.push({ text: 'Data loading on screens where an async useEffect was converted (including StrictMode)', reason: 'anti-patterns' });
   if (inv && (inv.pickers || []).length) checklist.push({ text: 'Date pickers – the MIGRATION-TODO items in migration-report.json are handled, and every picker was checked visually in 4 states (empty, focused, with a date, with an error): date, label and error text aligned right, not over the icon, the outline notch under the label', reason: 'pickers' });
   if (git.stashCount) checklist.push({ text: 'git stash has ' + git.stashCount + ' entries – check whether anything needs to be restored (git stash list)', reason: 'stash' });

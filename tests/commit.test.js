@@ -69,7 +69,7 @@ test('commits all changes with the step message and real file count', () => {
   const res = run(['--step', 'mechanical'], deps(r.work));
   assert.strictEqual(res.result, 'OK', JSON.stringify(res.blockers));
   assert.strictEqual(res.filesChanged, 3);
-  assert.strictEqual(res.message, 'migration-v2(mechanical): package.json, MUI imports, React 18 (3 files)');
+  assert.strictEqual(res.message, 'migration-v2(mechanical): package.json, unused imports, MUI imports, React 18 (3 files)');
   assert.strictEqual(lastMessage(r.work), res.message);
   assert.strictEqual(res.sha, g(r.work, ['rev-parse', 'HEAD']));
   assert.strictEqual(g(r.work, ['status', '--porcelain']), '');

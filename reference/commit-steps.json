@@ -1,7 +1,7 @@
 {
   "messagePrefix": "migration-v2",
   "steps": {
-    "mechanical": "package.json, MUI imports, React 18",
+    "mechanical": "package.json, unused imports, MUI imports, React 18",
     "infra": "styles, date pickers, useSharedState, webpack federation",
     "build-fixes": "build error fixes"
   },

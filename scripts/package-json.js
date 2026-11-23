@@ -346,7 +346,7 @@ function run(argv, overrides) {
     });
   });
 
-  // 6b. updateIfDeclared (@ips/react-attachments) – exact version, only where already declared; never added
+  // 6b. updateIfDeclared (@ips/react-attachments, @ips/maoz-attachments) – exact version, only where already declared; never added
   dataKeys(versions.updateIfDeclared).forEach((name) => {
     const range = versions.updateIfDeclared[name];
     [D, DEV].forEach((block) => {

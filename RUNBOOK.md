@@ -1,3 +1,5 @@
+<div dir="rtl">
+
 # הסבת שירות לדור 2 – הרצה ידנית מהטרמינל
 
 הסקריפט מבצע את ההסבה: React 18, MUI v7 ו-`buildSharedGen1`. הוא עובד על בראנץ' חדש `digital_V2` ועושה commits לבד.
@@ -25,11 +27,11 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 > **חשוב:** את הסקריפט שמים **מחוץ** לריפו של השירות. לא ב-`.claude/skills` של השירות.
 > אחרת git של השירות רואה אותו כקבצים חדשים, וההרצה נעצרת על "git לא נקי".
 
-1. מעתיקים את התיקייה `mfe-migration-v2` מהתיקייה המשותפת ל-**`C:\tools\mfe-migration-v2`** במחשב המקומי.
+1. מעתיקים את התיקייה `mfe-migration-v2` מהתיקייה המשותפת (`N:\migration-script`) ל-**`C:\tools\mfe-migration-v2`** במחשב המקומי.
    כל הפקודות בקובץ הזה מניחות את הנתיב הזה.
 
    ```powershell
-   robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR /XD node_modules
+   robocopy N:\migration-script\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR /XD node_modules
    ```
 
 2. מתקינים את החבילות של הסקיל (`ts-morph`) מה-feed הפנימי:
@@ -41,7 +43,7 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 
 3. עוברים לשירות וממשיכים לסעיף 1.
 
-- לא מריצים את הסקריפט ישירות מנתיב רשת (`\\server\...`), אלא רק מהעותק המקומי.
+- לא מריצים את הסקריפט ישירות מנתיב רשת (`N:\migration-script` או `\\server\...`), אלא רק מהעותק המקומי ב-`C:\tools`.
   מנתיב רשת `ts-morph` לא נטען, ומופיעה הודעה מטעה שמבקשת להריץ npm install.
 - כשמתפרסמת גרסה חדשה של הסקיל, חוזרים על שלבים 1–2 (`robocopy` ואז `npm i`). ראו "אחרי עדכון של הסקיל".
 
@@ -63,8 +65,12 @@ git pull
 
 - [ ] `git status` נקי. אם לא: עושים commit או `git stash`.
 - [ ] עומדים על הבראנץ' שממנו רוצים להסב. **`digital_V2` ייווצר ממנו בלי לשאול.**
+- [ ] יש גישה לחבילה הפנימית: `npm view @ips/mfe-shared-deps version` מחזיר מספר גרסה.
+      אם לא, בודקים את `.npmrc` ואת החיבור לרשת הפנימית **לפני** ההרצה.
 - [ ] **מומלץ:** מריצים `npm run build:dev` ומוודאים שהוא עובר **לפני** ההסבה.
       כך יודעים אילו שגיאות היו קיימות קודם ואילו נגרמו מההסבה.
+- [ ] **מומלץ:** מריצים `npm start` ומצלמים את המסכים העיקריים, בעיקר מסכים עם תאריכונים ועם עיצובים מותאמים (`makeStyles`).
+      רושמים גם שגיאות שכבר מופיעות בקונסול של הדפדפן. כך אפשר להשוות אחרי ההסבה ולדעת מה באמת השתנה.
 
 ---
 
@@ -112,7 +118,15 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 - [ ] קוראים את `MIGRATION-V2-REPORT.md` בשורש השירות, **בעיקר את הסעיף "Needs manual handling"**.
       כל פריטי ה-REVIEW מההרצה נמצאים שם. בסוף הפלט מודפס גם באילו שלבים היו פריטים כאלה.
 - [ ] מטפלים בפריטים הידניים מהדוח. אחרי זה: `git add` ו-`git commit` (את הדוח עצמו לא צריך להכניס).
-- [ ] `npm start` ובדיקה ידנית של המסכים העיקריים.
+- [ ] **imports שנמחקו כי לא היו בשימוש:** ההסבה מוחקת imports שלא משתמשים בהם, כי גם import כזה נטען בזמן ריצה ועלול להפיל את השירות ב-React 18.
+      כשנמחק import של קובץ מקומי (`./`, `../`), הדוח מציג אותו כפריט לבדיקה: "Unused import of the local module ... removed".
+      לכל פריט כזה פותחים את הקובץ המקומי ובודקים שאין בו קוד שרץ בטעינה, למשל `axios.interceptors`, אתחול i18n או רישום גלובלי.
+      אם יש קוד כזה, מחזירים את השורה בתור `import './api';`, בלי שם.
+      (קבצי CSS/SCSS/LESS לא נמחקים: הם נשארים בתור `import './x.css'`.)
+- [ ] `npm start` ובדיקה ידנית של המסכים העיקריים, מול הצילומים מלפני ההסבה (סעיף 1).
+      - **מסכים שהשתמשו ב-`makeStyles`:** מרווחים, צבעים, גדלי פונט ויישור נראים כמו לפני ההסבה.
+      - **קונסול הדפדפן:** אין שגיאות חדשות לעומת מה שהיה לפני ההסבה (אדום, וגם אזהרות React/MUI).
+- [ ] אם יש לשירות בדיקות: `npm test` עובר.
 - [ ] **בודקים כל תאריכון (DatePicker / DateTimePicker / TimePicker) במסך**, בארבעה מצבים: ריק, בפוקוס, עם תאריך שנבחר, ועם שגיאה.
       - **עיצוב:** התאריך, ה-label וטקסט השגיאה מיושרים לימין ולא עולים על האייקון. הרווח במסגרת נמצא בדיוק מתחת ל-label.
       - **התנהגות:** כל אחד מאלה עובד:
@@ -122,7 +136,15 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
         - תאריך לא חוקי מציג את השגיאה ולא מפיל את המסך.
         - הכפתורים בתחתית הלוח (למשל "היום", "נקה") עובדים.
       - **אם משהו לא תקין:** מחפשים `MIGRATION-TODO` בקובץ של אותו תאריכון. פירוט לכל קובץ נמצא ב-`migration-report.json` בשורש השירות.
-- [ ] בודקים שהשירות עולה גם בתוך Host ישן (React 17) וגם בתוך Host חדש.
+- [ ] **בדיקה תחת Host ישן ותחת Host חדש – חובה.**
+      הסקריפט בודק רק הרצה עצמאית של השירות (`npm start`). תחת Host השירות רץ על גרסת React של ה-Host,
+      ולכן מה שעובד ב-`npm start` עלול לקרוס תחת Host. אסור לדלג על הבדיקה הזו.
+      - **Host ישן (React 17):** טוענים את השירות דרך ה-Host הישן ועוברים על המסכים העיקריים.
+        מוודאים שהשירות נטען, שהמסכים מוצגים ושאין שגיאות בקונסול.
+        שגיאה כמו `useId is not a function` או `is not a function` על hook/פונקציה של router אומרת שבקוד יש API שקיים רק ב-React 18 או ב-router חדש. מתייעצים.
+      - **Host חדש (React 18):** אותה בדיקה דרך ה-Host החדש.
+      - בשני ה-Hosts בודקים גם ניווט בין מסכים, תאריכונים ומסכים שהשתמשו ב-`makeStyles`.
+      - פירוט נוסף: `C:\tools\mfe-migration-v2\reference\coexistence.md`.
 - [ ] `git log --oneline` – בודקים את ה-commits (`migration-v2: ...`).
 - [ ] **אופציונלי:** מאחדים את כל ה-commits ל-commit אחד שלכם (ראו "איחוד ה-commits" למטה).
 - [ ] מעלים:
@@ -201,7 +223,7 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 קיבלתם גרסה חדשה של הסקיל, ובשירות כבר יש הרצה שהסתיימה? מעדכנים ומריצים את אותה פקודה:
 
 ```powershell
-robocopy <התיקייה המשותפת>\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR /XD node_modules
+robocopy N:\migration-script\mfe-migration-v2 C:\tools\mfe-migration-v2 /MIR /XD node_modules
 cd C:\tools\mfe-migration-v2
 npm i
 cd C:\path\to\my-service
@@ -222,3 +244,5 @@ node C:\tools\mfe-migration-v2\scripts\run.js --auto
 - ב-PowerShell כותבים כל פקודה בשורה נפרדת, בלי `&&`.
 - התיקייה `.migration\` היא ה-state של ההרצה. לא עורכים אותה, והיא לא נכנסת ל-commit.
 - אין צורך ב-`--resume` או ב-`--yes`. `--auto` כבר ממשיך לבד, ואף דגל לא מאשר מצב stub.
+
+</div>

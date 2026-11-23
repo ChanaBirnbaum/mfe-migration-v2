@@ -151,6 +151,26 @@ test('no router / no stash → those checklist items are absent', () => {
   const list = reportOf(root).split('## What to check before the PR')[1];
   assert.ok(list.indexOf('react-router') === -1);
   assert.ok(list.indexOf('stash') === -1);
+  assert.ok(list.indexOf('Unused imports of local modules') === -1);
+});
+
+test('unused local imports removed → a review item in manual and a checklist item; package imports alone → neither', () => {
+  const root = setup({ buildOk: true });
+  write(root, '.migration/codemod-unused-imports.json', JSON.stringify(result('codemod-unused-imports', {
+    result: 'REVIEW',
+    changes: [
+      { file: 'src/App.jsx', line: 3, rule: 'UNUSED.IMPORT', confidence: 'review', detail: "import removed: setup from '../api'", reason: "Unused import of the local module '../api' removed – the module is no longer loaded from this file" },
+      { file: 'src/App.jsx', line: 4, rule: 'UNUSED.IMPORT', confidence: 'auto', detail: "import removed: a from 'lodash'" },
+    ],
+  })));
+  run([], { cwd: root, now: NOW, env: GIT_ENV });
+  const md = reportOf(root);
+  const manual = md.slice(md.indexOf('## Needs manual handling'), md.indexOf('## Changes made'));
+  assert.match(manual, /`src\/App\.jsx:3` – To review: Unused import of the local module '\.\.\/api' removed/);
+  assert.ok(manual.indexOf('lodash') === -1);
+  assert.match(md, /### unused imports \(2\)/);
+  const list = md.split('## What to check before the PR')[1];
+  assert.match(list, /- \[ \] Unused imports of local modules were removed \(1\)/);
 });
 
 test('missing script outputs are listed; git commits fill the gap', () => {
@@ -158,7 +178,7 @@ test('missing script outputs are listed; git commits fill the gap', () => {
   fs.unlinkSync(path.join(root, '.migration', 'codemod-mui-imports.json'));
   run([], { cwd: root, now: NOW, env: GIT_ENV });
   const md = reportOf(root);
-  assert.match(md, /Outputs not found in \.migration\/: preflight, branch, codemod-mui-imports/);
+  assert.match(md, /Outputs not found in \.migration\/: preflight, branch, codemod-unused-imports, codemod-mui-imports/);
   assert.match(md, /### commit mechanical \(1\)\n\n\| Step \| File \| What changed \|\n\|---\|---\|---\|\n\| commit mechanical \| `src\/App\.jsx` \| modified \(migration-v2\(mechanical\)/);
 });
 

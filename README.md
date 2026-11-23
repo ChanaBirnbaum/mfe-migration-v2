@@ -76,7 +76,7 @@
 
 ## מה קורה בתהליך
 
-הסקיל מבוסס על מתזמר (`scripts/run.js`) שמריץ **19 שלבים** לפי הסדר. כל שלב הוא סקריפט דטרמיניסטי
+הסקיל מבוסס על מתזמר (`scripts/run.js`) שמריץ **20 שלבים** לפי הסדר. כל שלב הוא סקריפט דטרמיניסטי
 (codemods מבוססי AST עם `ts-morph`), כך שרוב העבודה לא נעשית ע"י המודל אלא ע"י קוד שנבדק.
 Claude אחראי על ההרצה, על נקודות ההחלטה ועל תיקון שגיאות ה-build שהקודמודים לא סגרו.
 
@@ -95,31 +95,32 @@ Claude אחראי על ההרצה, על נקודות ההחלטה ועל תיק�
 | # | שלב | מה קורה |
 |---|---|---|
 | 4 | `package-json` | מעדכן גרסאות: React 18, ‏`@mui/material` 7, Emotion, ‏`@ips/mfe-shared-deps`, ‏`@types/react` 18; מסיר את חבילות `@material-ui/*`. העריכה נקודתית ושומרת על הפורמט של הקובץ |
-| 5 | `codemod-mui-imports` | ממיר ייבואים `@material-ui/*` ל-`@mui/*`, כולל שינויי שמות של קומפוננטות ואייקונים ו-`palette.type` שהופך ל-`palette.mode` |
-| 6 | `codemod-react18` | `createRoot` במקום `ReactDOM.render` ב-bootstrap, הסרת `defaultProps` בקומפוננטות פונקציה, ‏`children` מפורש ב-`FC` (TypeScript) |
-| 7 | `codemod-anti-patterns` | `useEffect(async …)` → effect רגיל: עם `await` – פונקציה פנימית `run`, בלי `await` – רק הסרת `async`. ‏cancelled guard על כל `setState` אחרי `await` או בתוך `.then`/`.catch` (מתאים ל-StrictMode של React 18); אין `setState` כזה – אין guard |
-| 8 | `commit-mechanical` | commit לשלבים 4–7 |
+| 5 | `codemod-unused-imports` | מוחק ייבואים שאינם בשימוש בקובץ. גם ייבוא שלא משתמשים בו נטען בזמן ריצה, וייבוא של API שלא קיים יותר ב-React 18 / MUI v7 מפיל את השירות. גישה שמרנית: שם שמופיע בקובץ בכל מקום אחר נשאר. לא נוגע ב-`import './x.css'`, ב-`React` בקובץ עם JSX ובקבצי `.d.ts`. קובץ סגנון שמיובא עם שם (`import s from './x.css'`) ממשיך להיטען בתור `import './x.css'`. import שלם של קובץ מקומי (`./`, `../`) שנמחק מופיע בדוח כפריט לבדיקה, כי ייתכן שיש בקובץ קוד שרץ בטעינה |
+| 6 | `codemod-mui-imports` | ממיר ייבואים `@material-ui/*` ל-`@mui/*`, כולל שינויי שמות של קומפוננטות ואייקונים ו-`palette.type` שהופך ל-`palette.mode` |
+| 7 | `codemod-react18` | `createRoot` במקום `ReactDOM.render` ב-bootstrap, הסרת `defaultProps` בקומפוננטות פונקציה, ‏`children` מפורש ב-`FC` (TypeScript) |
+| 8 | `codemod-anti-patterns` | `useEffect(async …)` → effect רגיל: עם `await` – פונקציה פנימית `run`, בלי `await` – רק הסרת `async`. ‏cancelled guard על כל `setState` אחרי `await` או בתוך `.then`/`.catch` (מתאים ל-StrictMode של React 18); אין `setState` כזה – אין guard |
+| 9 | `commit-mechanical` | commit לשלבים 4–8 |
 
 ### שלב ג' – סגנונות ותשתית → commit שני
 
 | # | שלב | מה קורה |
 |---|---|---|
-| 9 | `codemod-makestyles` | `makeStyles` מוחלף באובייקטי סגנון דרך `sx` / `slotProps` של MUI v7 |
-| 10 | `codemod-pickers` | `@mui/x-date-pickers` v5 → v9: הקודמודים הרשמיים (`@mui/x-codemod` v6–v9), אחריהם כללי הסקיל (`slots` / `slotProps`, `renderInput` → `slotProps.textField`, `moment()` סביב ערכים, action bar), ויישור RTL של השדה (`pickersRtlSxSmall` / `pickersRtlSxMedium`) בלי ThemeProvider. `size` שעל ה-picker או על `FormControl` העוטף עובר ל-`slotProps.textField.size`, כדי שגובה השדה יתאים לשאר הפקדים. מה שלא הוסב בוודאות מסומן `MIGRATION-TODO`. דוח: `migration-report.json` (לא נכנס ל-commit). קונפיגורציה: `pickers-migration.config.json` בשורש השירות (אופציונלי) |
-| 11 | `use-shared-state` | מתקין את הגרסה העדכנית של `useSharedState` מתוך `assets/` (עם אימות sha256) ובודק את מקומות השימוש בו |
-| 12 | `webpack-shared` | מחליף את הגדרת ה-`shared` ב-`webpack.config.js` בקריאה ל-`buildSharedGen1({ pkg, require, role })` |
-| 13 | `commit-infra` | commit לשלבים 9–12 |
+| 10 | `codemod-makestyles` | `makeStyles` מוחלף באובייקטי סגנון דרך `sx` / `slotProps` של MUI v7 |
+| 11 | `codemod-pickers` | `@mui/x-date-pickers` v5 → v9: הקודמודים הרשמיים (`@mui/x-codemod` v6–v9), אחריהם כללי הסקיל (`slots` / `slotProps`, `renderInput` → `slotProps.textField`, `moment()` סביב ערכים, action bar), ויישור RTL של השדה (`pickersRtlSxSmall` / `pickersRtlSxMedium`) בלי ThemeProvider. `size` שעל ה-picker או על `FormControl` העוטף עובר ל-`slotProps.textField.size`, כדי שגובה השדה יתאים לשאר הפקדים. מה שלא הוסב בוודאות מסומן `MIGRATION-TODO`. דוח: `migration-report.json` (לא נכנס ל-commit). קונפיגורציה: `pickers-migration.config.json` בשורש השירות (אופציונלי) |
+| 12 | `use-shared-state` | מתקין את הגרסה העדכנית של `useSharedState` מתוך `assets/` (עם אימות sha256) ובודק את מקומות השימוש בו |
+| 13 | `webpack-shared` | מחליף את הגדרת ה-`shared` ב-`webpack.config.js` בקריאה ל-`buildSharedGen1({ pkg, require, role })` |
+| 14 | `commit-infra` | commit לשלבים 10–13 |
 
 ### שלב ד' – התקנה, build ואימות → commit שלישי
 
 | # | שלב | מה קורה |
 |---|---|---|
-| 14 | `install` | מוחק `node_modules` ו-`package-lock.json` ומריץ `npm install` נקי. **אף פעם לא** `--legacy-peer-deps` / `--force` |
-| 15 | `webpack-validate` | טוען את `webpack.config.js` ומוודא ש-`buildSharedGen1` עובד מול החבילה המותקנת |
-| 16 | `build` | `npm run build:dev`. אם נכשל – **סבב תיקון**: Claude מתקן לפי [reference/known-errors.md](reference/known-errors.md) ומריץ שוב. עד 5 סבבים, ועצירה אם מספר השגיאות לא יורד בשני סבבים רצופים |
-| 17 | `verify-runtime` | מרים את שרת הפיתוח (בלי דפדפן) ובודק ש-`remoteEntry.js` והדף הראשי נטענים |
-| 18 | `commit-build-fixes` | commit לתיקוני ה-build |
-| 19 | `report` | כותב את `MIGRATION-V2-REPORT.md` (לא נכנס ל-commit) |
+| 15 | `install` | מוחק `node_modules` ו-`package-lock.json` ומריץ `npm install` נקי. **אף פעם לא** `--legacy-peer-deps` / `--force` |
+| 16 | `webpack-validate` | טוען את `webpack.config.js` ומוודא ש-`buildSharedGen1` עובד מול החבילה המותקנת |
+| 17 | `build` | `npm run build:dev`. אם נכשל – **סבב תיקון**: Claude מתקן לפי [reference/known-errors.md](reference/known-errors.md) ומריץ שוב. עד 5 סבבים, ועצירה אם מספר השגיאות לא יורד בשני סבבים רצופים |
+| 18 | `verify-runtime` | מרים את שרת הפיתוח (בלי דפדפן) ובודק ש-`remoteEntry.js` והדף הראשי נטענים |
+| 19 | `commit-build-fixes` | commit לתיקוני ה-build |
+| 20 | `report` | כותב את `MIGRATION-V2-REPORT.md` (לא נכנס ל-commit) |
 
 > **למה React 18 בקוד אבל זה עדיין עובד תחת Host ישן?**
 > `buildSharedGen1` מגדיר את React ו-router כ-singleton שה-Host מספק. תחת Host ישן השירות רץ בפועל על React 17,
